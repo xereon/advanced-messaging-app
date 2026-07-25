@@ -480,6 +480,7 @@ function openConvo(convoId) {
   pendingAttachments = [];
   renderAttachmentTray();
   activeMsgId = null;
+  for (const open of $$('#messages .msg.actions-open')) open.classList.remove('actions-open');
   activeConvoId = convoId;
   lastReadBeforeOpen = db.readsOf(convoId)[me.id] || 0;
   $('#empty-state').hidden = true;
@@ -584,7 +585,10 @@ function renderConvoHeader() {
     const dot = document.createElement('span');
     dot.className = 'presence-dot' + (db.isOnline(view.other) ? '' : ' off');
     dot.setAttribute('aria-hidden', 'true');
-    sub.append(dot, document.createTextNode(view.subtitle));
+    const label = document.createElement('span');
+    label.className = 'convo-subtitle-text';
+    label.textContent = view.subtitle;
+    sub.append(dot, label);
   } else {
     const names = convo.members.filter((m) => m !== me.id)
       .map((m) => db.getUser(m)?.name.split(' ')[0] || '?').join(', ');
@@ -844,6 +848,65 @@ function refreshRovingTabstop() {
   const target = current || els[els.length - 1];
   for (const el of els) el.tabIndex = el === target ? 0 : -1;
   activeMsgId = target.dataset.msgId;
+}
+
+/** Touch devices have no hover, so message actions are revealed by tapping the
+    message. Taps on links, buttons and reactions keep their own behaviour. */
+function wireTouchMessageActions() {
+  const list = $('#messages');
+  let lastPointerWasTouch = false;
+
+  // Per-interaction, not per-device: a hybrid laptop should get the tap
+  // behaviour when touched and the hover behaviour when using a trackpad.
+  list.addEventListener('pointerdown', (e) => { lastPointerWasTouch = e.pointerType === 'touch'; }, true);
+
+  list.addEventListener('click', (e) => {
+    if (!lastPointerWasTouch) return;
+    if (e.target.closest('a, button, .reaction-chip')) return;
+    const msg = e.target.closest('.msg');
+    if (!msg || msg.classList.contains('deleted')) return;
+    const wasOpen = msg.classList.contains('actions-open');
+    for (const other of $$('#messages .msg.actions-open')) other.classList.remove('actions-open');
+    if (!wasOpen) {
+      msg.classList.add('actions-open');
+      setActiveMessage(msg, { focus: false });
+    }
+  });
+
+  // Tapping away closes the open toolbar.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.msg')) return;
+    for (const msg of $$('#messages .msg.actions-open')) msg.classList.remove('actions-open');
+  });
+}
+
+/** The on-screen keyboard shrinks the visual viewport without changing
+    window.innerHeight on iOS, which would leave the composer underneath it. */
+function wireVisualViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const root = document.documentElement;
+  const apply = () => {
+    // Only override the height when the on-screen keyboard is genuinely up.
+    // The visual and layout viewports differ slightly for other reasons
+    // (scrollbars, browser UI), and clamping to that would leave dead space.
+    const keyboardInset = window.innerHeight - vv.height;
+    if (keyboardInset > 120) root.style.setProperty('--app-height', `${Math.round(vv.height)}px`);
+    else root.style.removeProperty('--app-height');
+  };
+  vv.addEventListener('resize', apply);
+  window.addEventListener('orientationchange', () => setTimeout(apply, 200));
+  apply();
+
+  // Bring the newest message back into view once the keyboard has settled.
+  $('#composer-input').addEventListener('focus', () => {
+    setTimeout(() => {
+      const wrap = $('#messages');
+      if (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 240) {
+        wrap.scrollTo({ top: wrap.scrollHeight, behavior: 'instant' });
+      }
+    }, 250);
+  });
 }
 
 function wireMessageKeys() {
@@ -2019,6 +2082,8 @@ export function initUI(user, { onSignOut } = {}) {
   wireStoreEvents();
   wireShortcuts();
   wireMessageKeys();
+  wireTouchMessageActions();
+  wireVisualViewport();
   db.connect();
   announce(`Signed in as ${me.name}. ${myConvos().length} conversations.`);
 }

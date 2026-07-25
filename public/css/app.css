@@ -314,7 +314,12 @@ body {
   background: var(--bg);
   color: var(--text);
   height: 100%;
+  /* dvh tracks the collapsing browser chrome; --app-height is set from
+     visualViewport when the on-screen keyboard is open. */
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
   overflow: hidden;
+  overscroll-behavior: none;
 }
 [data-bold-text="true"] body { font-weight: 600; }
 
@@ -484,20 +489,24 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 
 /* ---------- Menus ---------- */
 .menu {
-  position: absolute;
+  position: fixed;
   z-index: 60;
-  min-width: 13rem;
+  inset: auto 0 0 0;
+  min-width: 0;
+  width: 100%;
+  animation: sheet-up 0.2s cubic-bezier(0.2, 0.9, 0.3, 1);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-m);
   box-shadow: var(--shadow-2);
   padding: 0.35rem;
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
 }
 .menu hr { border: 0; border-top: 1px solid var(--border); margin: 0.35rem 0; }
 .menu [role="menuitem"] {
   display: flex; align-items: center; gap: 0.6rem;
   width: 100%;
-  padding: 0.5rem 0.65rem;
+  padding: 0.8rem 0.9rem;
   border: 0; background: none;
   border-radius: var(--radius-s);
   color: var(--text);
@@ -560,7 +569,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
   margin: 1.1rem 0;
 }
 .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
-.alt-auth { display: flex; gap: 0.5rem; }
+.alt-auth { display: flex; flex-direction: column; gap: 0.5rem; }
 .alt-auth .btn { font-size: 0.875rem; padding-inline: 0.5rem; }
 
 .demo-inbox {
@@ -635,15 +644,19 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .topbar {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  padding-top: max(0.4rem, env(safe-area-inset-top));
+  padding-left: max(0.6rem, env(safe-area-inset-left));
+  padding-right: max(0.6rem, env(safe-area-inset-right));
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex: none;
 }
-.topbar-title { font-weight: 700; font-size: 1.0625rem; letter-spacing: -0.01em; }
+.topbar-title { display: none; font-weight: 700; font-size: 1.0625rem; letter-spacing: -0.01em; }
 .topbar-search {
   flex: 1;
+  min-width: 0;
   max-width: 30rem;
   margin-inline: auto;
   display: flex;
@@ -659,6 +672,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .topbar-search input { border: 0; background: none; padding: 0.25rem 0; }
 .topbar-search input:focus-visible { outline: none; }
 .kbd-hint {
+  display: none;
   font-size: 0.6875rem;
   color: var(--text-3);
   border: 1px solid var(--border);
@@ -669,20 +683,30 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 }
 .topbar-actions { display: flex; align-items: center; gap: 0.25rem; position: relative; }
 .avatar-btn { padding: 0.15rem; border-radius: 50%; border-color: transparent; background: none; }
-#user-menu { top: calc(100% + 0.4rem); right: 0; }
+#user-menu { inset: auto 0 0 0; }
 
 /* ---------- Layout ---------- */
-.layout { flex: 1; display: flex; min-height: 0; }
+.layout { flex: 1; display: flex; min-height: 0; position: relative; }
 .sidebar {
-  width: 20.5rem;
+  width: 100%;
   flex: none;
   background: var(--surface);
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; background: var(--bg); }
+/* One pane at a time on a phone: the conversation covers the list. */
+.main {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: none;
+  min-width: 0;
+  flex-direction: column;
+  background: var(--bg);
+}
+.chat-screen[data-mobile-view="convo"] .main { display: flex; }
+.chat-screen[data-mobile-view="convo"] .sidebar { display: none; }
 
 .sidebar-tabs {
   display: flex;
@@ -783,14 +807,14 @@ input[aria-invalid="true"] { border-color: var(--danger); }
   border-bottom: 1px solid var(--border);
   flex: none;
 }
-.back-btn { display: none; }
+.back-btn { display: inline-flex; }
 .convo-title-wrap { flex: 1; min-width: 0; }
 .convo-title { font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .convo-subtitle { font-size: 0.8125rem; color: var(--text-2); display: flex; align-items: center; gap: 0.3rem; }
 .convo-subtitle .presence-dot { position: static; border: 0; width: 0.55rem; height: 0.55rem; }
 .convo-actions { display: flex; gap: 0.15rem; position: relative; }
 .convo-actions .icon-btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-#convo-menu { top: calc(100% + 0.3rem); right: 0; }
+#convo-menu { inset: auto 0 0 0; }
 
 .convo-search {
   display: flex;
@@ -809,7 +833,9 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem 1.25rem 0.5rem;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.75rem 0.75rem 0.5rem;
   scroll-behavior: smooth;
   display: flex;
   flex-direction: column;
@@ -839,7 +865,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
   display: flex;
   gap: 0.6rem;
   margin-top: var(--gap-msg);
-  max-width: min(46rem, 88%);
+  max-width: 94%;
   position: relative;
 }
 .msg.group-start { margin-top: 0.75rem; }
@@ -938,7 +964,11 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 }
 .msg.in .msg-actions { left: 2.6rem; }
 .msg.out .msg-actions { right: 0.25rem; }
-.msg:hover .msg-actions, .msg:focus-within .msg-actions { display: inline-flex; }
+.msg:hover .msg-actions { display: inline-flex; }
+/* A tap opens the toolbar on touch, whatever the device reports as its primary
+   pointer, so hybrid laptops get both routes in. */
+.msg.actions-open .msg-actions { display: inline-flex; }
+.msg.actions-open .msg-time { display: inline; }
 .msg.demo { pointer-events: none; }
 
 .react-palette {
@@ -993,7 +1023,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin: 0 1.25rem;
+  margin: 0 0.75rem;
   padding: 0.5rem 0.75rem;
   background: var(--accent-soft);
   color: var(--accent-soft-text);
@@ -1007,8 +1037,11 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .composer {
   display: flex;
   align-items: flex-end;
-  gap: 0.5rem;
-  padding: 0.75rem 1.25rem 1rem;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
   flex: none;
   position: relative;
 }
@@ -1040,13 +1073,12 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .char-count.limit { color: var(--danger); font-weight: 700; }
 .send-btn { border-radius: 50%; width: 2.5rem; height: 2.5rem; flex: none; }
 .emoji-menu {
-  bottom: calc(100% + 0.25rem);
-  left: 1rem;
   display: grid;
   grid-template-columns: repeat(8, 1fr);
-  gap: 0.1rem;
-  min-width: auto;
+  gap: 0.15rem;
+  padding: 0.5rem;
 }
+.emoji-menu button { font-size: 1.5rem; padding: 0.45rem; }
 .emoji-menu button {
   border: 0; background: none;
   font-size: 1.2rem;
@@ -1058,13 +1090,30 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 /* ---------- Dialogs ---------- */
 .dialog {
   border: 1px solid var(--border);
-  border-radius: var(--radius-l);
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-2);
   padding: 0;
-  width: min(34rem, calc(100vw - 2rem));
-  max-height: min(85vh, 46rem);
+  /* Phones get a bottom sheet: full width, anchored to the bottom edge,
+     thumb-reachable, and clear of the home indicator. */
+  width: 100%;
+  max-width: 100%;
+  max-height: 92dvh;
+  margin: auto auto 0;
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  border-bottom: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: sheet-up 0.22s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+@keyframes sheet-up { from { transform: translateY(100%); } }
+.dialog::before {
+  content: "";
+  display: block;
+  width: 2.25rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: var(--border-strong);
+  margin: 0.5rem auto 0;
 }
 .dialog::backdrop { background: var(--scrim); }
 [data-reduce-transparency="true"] .dialog::backdrop { background: rgb(20, 24, 34); opacity: 0.92; }
@@ -1084,23 +1133,26 @@ input[aria-invalid="true"] { border-color: var(--danger); }
   padding: 1rem 1.25rem;
   border-top: 1px solid var(--border);
 }
-.sm-dialog { width: min(26rem, calc(100vw - 2rem)); }
+.sm-dialog { width: 100%; }
 .sm-dialog .dialog-footer { border-top: 0; padding: 0.5rem 0 0; }
 
 /* ---------- Settings dialog ---------- */
-.settings-dialog { width: min(52rem, calc(100vw - 2rem)); height: min(85vh, 44rem); }
+.settings-dialog { width: 100%; height: 100%; }
 .settings-dialog[open] { display: flex; flex-direction: column; }
-.settings-body { flex: 1; display: flex; min-height: 0; }
+.settings-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .settings-nav {
-  width: 13.5rem;
+  width: 100%;
   flex: none;
-  border-right: 1px solid var(--border);
-  padding: 0.75rem 0.5rem;
+  flex-direction: row;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem;
   display: flex;
-  flex-direction: column;
   gap: 0.15rem;
-  overflow-y: auto;
+  scrollbar-width: none;
 }
+.settings-nav::-webkit-scrollbar { display: none; }
+.settings-nav-item { white-space: nowrap; }
 .settings-nav-item {
   display: flex;
   align-items: center;
@@ -1116,7 +1168,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 }
 .settings-nav-item:hover { background: var(--sunken); color: var(--text); }
 .settings-nav-item[aria-current="true"] { background: var(--accent-soft); color: var(--accent-soft-text); font-weight: 600; }
-.settings-panels { flex: 1; overflow-y: auto; padding: 1.25rem 1.5rem 2rem; }
+.settings-panels { flex: 1; overflow-y: auto; padding: 1rem 1rem 2rem; }
 .settings-panel h3 {
   font-size: 0.8125rem;
   text-transform: uppercase;
@@ -1267,34 +1319,118 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   .msg-actions { border: 1px solid CanvasText; }
 }
 
-/* ---------- Responsive ---------- */
-@media (max-width: 860px) {
-  .sidebar { width: 16.5rem; }
-  .topbar-search .kbd-hint { display: none; }
+/* ==========================================================================
+   Responsive ladder — mobile first.
+   Base rules above are the phone. Each query below adds capability as the
+   viewport earns it; nothing is taken away.
+   ========================================================================== */
+
+/* ---------- Touch input, at any size ---------- */
+@media (pointer: coarse) {
+  /* No hover on touch, so message actions must be revealed by tapping.
+     ui.js toggles .actions-open on the tapped message. */
+  .msg .msg-actions { display: none; }
+  .msg.actions-open .msg-actions { display: inline-flex; }
+  .msg.actions-open .msg-time { display: inline; }
+
+  .btn, .btn.icon-btn, .btn.icon-btn.sm,
+  .convo-item, .directory-item, .settings-nav-item,
+  .menu [role="menuitem"], .sidebar-tabs [role="tab"] { min-height: 44px; }
+  .btn.icon-btn, .btn.icon-btn.sm { min-width: 44px; }
+  .reaction-chip { min-height: 32px; padding-inline: 0.7rem; }
+  .msg-actions button { min-width: 40px; min-height: 40px; }
+  /* 16px is the threshold below which iOS zooms the page on focus. */
+  input, textarea, select { font-size: max(1rem, 16px); }
 }
-@media (max-width: 700px) {
-  .layout { position: relative; }
-  .sidebar { width: 100%; border-right: 0; }
-  .main { position: absolute; inset: 0; z-index: 20; display: none; }
-  .chat-screen[data-mobile-view="convo"] .main { display: flex; }
-  .chat-screen[data-mobile-view="convo"] .sidebar { display: none; }
-  .back-btn { display: inline-flex; }
-  .topbar-title { display: none; }
-  .msg { max-width: 94%; }
-  .messages { padding-inline: 0.75rem; }
-  .composer { padding-inline: 0.75rem; }
-  .composer-context { margin-inline: 0.75rem; }
-  .settings-body { flex-direction: column; }
-  .settings-nav {
-    width: 100%;
-    flex-direction: row;
-    overflow-x: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
+
+/* ---------- Large phone ---------- */
+@media (min-width: 480px) {
+  .alt-auth { flex-direction: row; }
+  .messages { padding-inline: 1rem; }
+  .composer { padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); }
+  .composer-context, .attachment-tray { margin-inline: 1rem; }
+  .msg { max-width: 88%; }
+}
+
+/* ---------- Tablet: both panes side by side ---------- */
+@media (min-width: 768px) {
+  .layout { position: static; }
+  .sidebar {
+    width: 17rem;
+    border-right: 1px solid var(--border);
   }
-  .settings-nav-item { white-space: nowrap; }
-  .dialog { width: calc(100vw - 1rem); max-height: 92vh; }
-  .alt-auth { flex-direction: column; }
+  .main {
+    position: static;
+    display: flex !important;
+    flex: 1;
+    z-index: auto;
+  }
+  /* The phone's one-pane switch no longer applies. */
+  .chat-screen[data-mobile-view="convo"] .sidebar { display: flex; }
+  .back-btn { display: none; }
+  .topbar { padding: 0.5rem 1rem; gap: 0.75rem; }
+  .topbar-title { display: block; }
+  .messages { padding-inline: 1.25rem; }
+  .composer { padding: 0.75rem 1.25rem 1rem; }
+  .composer-context, .attachment-tray { margin-inline: 1.25rem; }
+  .msg { max-width: min(42rem, 84%); }
+
+  /* Dialogs stop being sheets and become centred panels. */
+  .dialog {
+    width: min(34rem, calc(100vw - 3rem));
+    max-width: min(34rem, calc(100vw - 3rem));
+    max-height: min(88dvh, 46rem);
+    margin: auto;
+    border-radius: var(--radius-l);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+    animation: none;
+  }
+  .dialog::before { display: none; }
+  .sm-dialog { width: min(26rem, calc(100vw - 3rem)); }
+  .settings-dialog {
+    width: min(46rem, calc(100vw - 3rem));
+    max-width: min(46rem, calc(100vw - 3rem));
+    height: min(86dvh, 44rem);
+  }
+
+  .menu {
+    position: absolute;
+    inset: auto;
+    width: auto;
+    min-width: 13rem;
+    border-radius: var(--radius-m);
+    padding-bottom: 0.35rem;
+    animation: none;
+  }
+  .menu [role="menuitem"] { padding: 0.5rem 0.65rem; }
+  #user-menu { top: calc(100% + 0.4rem); right: 0; left: auto; }
+  #convo-menu { top: calc(100% + 0.3rem); right: 0; left: auto; }
+  .emoji-menu { bottom: calc(100% + 0.25rem); left: 1rem; top: auto; right: auto; }
+  .emoji-menu button { font-size: 1.2rem; padding: 0.3rem; }
+}
+
+/* ---------- Tablet landscape: room for the settings sidebar ---------- */
+@media (min-width: 900px) {
+  .settings-body { flex-direction: row; }
+  .settings-nav {
+    width: 13.5rem;
+    flex-direction: column;
+    overflow-x: visible;
+    overflow-y: auto;
+    border-bottom: 0;
+    border-right: 1px solid var(--border);
+    padding: 0.75rem 0.5rem;
+  }
+  .settings-panels { padding: 1.25rem 1.5rem 2rem; }
+  .settings-dialog { width: min(52rem, calc(100vw - 3rem)); max-width: min(52rem, calc(100vw - 3rem)); }
+}
+
+/* ---------- Desktop ---------- */
+@media (min-width: 1024px) {
+  .sidebar { width: 20.5rem; }
+  .kbd-hint { display: inline; }
+  .msg { max-width: min(46rem, 88%); }
 }
 
 /* ---------- Connection banner ---------- */
@@ -1348,7 +1484,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin: 0 1.25rem 0.25rem;
+  margin: 0 0.75rem 0.25rem;
 }
 .attachment-chip {
   display: inline-flex;
@@ -1398,7 +1534,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   border-radius: var(--radius-m);
 }
 [data-strong-focus="true"] .msg:focus-visible { outline-width: 3px; box-shadow: 0 0 0 6px var(--focus-halo); }
-.msg:focus-within .msg-actions { display: inline-flex; }
+
 
 /* ---------- Passkeys ---------- */
 .passkey-list { list-style: none; padding: 0; margin: 0 0 0.5rem; max-width: 30rem; }
@@ -1415,6 +1551,66 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
 .passkey-row:last-child { border-bottom: 0; }
 .btn.sm { min-height: 1.9rem; padding: 0.2rem 0.6rem; font-size: 0.8125rem; }
 
-@media (max-width: 700px) {
-  .attachment-tray { margin-inline: 0.75rem; }
+
+
+/* ---------- Phone: search gets its own row on the list screen ---------- */
+@media (max-width: 767px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar-search {
+    order: 10;
+    flex-basis: 100%;
+    max-width: none;
+    margin-top: 0.35rem;
+  }
+  /* Inside a conversation the in-conversation search is the right tool, so the
+     global one steps aside and gives the messages its space back. */
+  .chat-screen[data-mobile-view="convo"] .topbar-search { display: none; }
+
+  .brand-mark.sm { margin-right: auto; }
+  .convo-header { padding: 0.5rem 0.6rem; }
+  .convo-title { font-size: 0.9375rem; }
+  .jump-latest { bottom: 5rem; right: 0.75rem; }
+  .toasts { left: 0.75rem; right: 0.75rem; bottom: max(0.75rem, env(safe-area-inset-bottom)); max-width: none; }
+  .settings-panels { padding-bottom: 3rem; }
+  .theme-grid { grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); }
+  .setting-row, .security-row, .shortcuts-table { max-width: none; }
+  .security-row { flex-wrap: wrap; }
+  .attachment-image { max-width: 100%; }
+}
+
+/* The message-actions toolbar is bigger and clear of the bubble on touch. */
+@media (pointer: coarse) {
+  .msg-actions { top: -1.4rem; padding: 0.15rem; gap: 0.15rem; }
+  .msg.in .msg-actions { left: 2.4rem; }
+  .msg.out .msg-actions { right: 0.15rem; }
+}
+
+/* ---------- Fixes found while testing at 375px ---------- */
+
+/* The subtitle must never wrap the header onto three lines. */
+.convo-subtitle { min-width: 0; }
+/* Ellipsis needs a non-flex box, so the text lives in its own element. */
+.convo-subtitle-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.convo-subtitle .presence-dot { flex: none; }
+
+/* Never upscale a small image to the container width. */
+.attachment-image { max-width: min(20rem, 100%); width: max-content; }
+.attachment-image img {
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 20rem;
+}
+
+@media (max-width: 767px) {
+  /* In a conversation the phone gives the whole screen to the messages; the
+     global bar is one tap away via Back. */
+  .chat-screen[data-mobile-view="convo"] .topbar { display: none; }
+  .convo-header { padding-top: max(0.5rem, env(safe-area-inset-top)); }
+  .attachment-image { max-width: min(14rem, 100%); }
 }

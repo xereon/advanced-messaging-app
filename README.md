@@ -149,6 +149,31 @@ Keyboard: `Ctrl+K` search, `Alt+↑/↓` switch conversation, `Alt+N` new chat,
 Inside the message list, `↑`/`↓` move between messages, `Home`/`End` jump to the
 ends, `Enter` opens a message's actions, and `R`/`E`/`C` reply, edit or copy.
 
+## Layout
+
+The CSS is authored **mobile first**: the base rules are the phone, and each
+breakpoint adds capability rather than taking it away.
+
+| Width | Layout |
+| --- | --- |
+| **Phone** (base) | One pane at a time — the conversation covers the list, with a back button. Search takes its own full-width row on the list screen and steps aside inside a conversation, which takes over the whole screen. Dialogs and menus are bottom sheets with a grab handle. |
+| **≥ 480px** | Sign-in options sit side by side; bubbles and padding relax. |
+| **≥ 768px** (tablet) | Both panes side by side, back button retired, dialogs become centred panels and menus return to anchored popovers. |
+| **≥ 900px** | The settings dialog regains its left-hand section nav. |
+| **≥ 1024px** (desktop) | Wider sidebar, keyboard hints in the search field. |
+
+Layout height uses `dvh`, so the collapsing browser chrome on a phone never
+crops the composer, and `visualViewport` is consulted only when the on-screen
+keyboard is genuinely open. Safe-area insets keep content clear of notches and
+home indicators.
+
+**Touch is treated as an input mode, not a screen size.** Message actions were
+previously hover-only, which made reply, react and copy unreachable on a phone;
+a tap now opens the toolbar, decided per interaction from `pointerType` so a
+hybrid touch laptop gets tap *and* hover. Under `pointer: coarse` every control
+grows to a 44px target and inputs reach 16px, below which iOS zooms the page on
+focus.
+
 ## Accessibility
 
 - **10 themes**, all WCAG AA: Corporate Light/Dark, Midnight Slate, High Contrast
