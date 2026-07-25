@@ -164,10 +164,37 @@ function directoryPeople() {
 }
 
 function personSubtitle(person) {
+  if (person.retired) return 'Former guest';
   const presence = db.isOnline(person) ? 'Online' : 'Offline';
   if (person.isBot) return `${person.role} · ${presence}`;
   if (person.isGuest) return `Guest · ${presence}`;
   return person.role ? `${person.role} · ${presence}` : presence;
+}
+
+/** The add/remove-contact toggle that sits beside a person anywhere they
+    appear. Keeps itself in sync; sidebar/dialog refreshes ride the
+    'contacts' store event. */
+function contactToggleBtn(person) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn icon-btn sm contact-toggle';
+  const sync = () => {
+    const has = db.isContact(me.id, person.id);
+    btn.setAttribute('aria-pressed', String(has));
+    btn.title = has ? `Remove ${person.name} from contacts` : `Add ${person.name} to contacts`;
+    btn.setAttribute('aria-label', btn.title);
+    btn.innerHTML = `<svg class="icon sm" aria-hidden="true"><use href="#i-${has ? 'user-check' : 'user-plus'}"/></svg>`;
+  };
+  sync();
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const had = db.isContact(me.id, person.id);
+    if (had) db.removeContact(me.id, person.id);
+    else db.addContact(me.id, person.id);
+    sync();
+    toast(had ? `${person.name} removed from contacts` : `${person.name} added to contacts`, 'success');
+  });
+  return btn;
 }
 
 /** Match on name, email and role so "priya", "priya@", "design" and
@@ -184,6 +211,9 @@ function searchPeople(q) {
   return directoryPeople()
     .filter((u) => personMatches(u, needle))
     .sort((a, b) => {
+      const ca = db.isContact(me.id, a.id) ? 0 : 1;
+      const cb = db.isContact(me.id, b.id) ? 0 : 1;
+      if (ca !== cb) return ca - cb;
       const oa = db.isOnline(a) ? 0 : 1;
       const ob = db.isOnline(b) ? 0 : 1;
       return oa !== ob ? oa - ob : a.name.localeCompare(b.name);
@@ -202,6 +232,7 @@ function myConvos() {
 }
 
 function renderSidebar() {
+  if (filter === 'contacts') { renderContactsList(); return; }
   const list = $('#convo-list');
   const s = getSettings();
   list.innerHTML = '';
@@ -273,6 +304,57 @@ function renderSidebar() {
   }
 }
 
+/* ---------- contacts tab ---------- */
+
+function personRow(person, { onOpen }) {
+  const row = document.createElement('div');
+  row.className = 'person-row';
+  const btn = document.createElement('button');
+  btn.className = 'convo-item';
+  btn.setAttribute('role', 'listitem');
+  const av = avatarEl(person);
+  const dot = document.createElement('span');
+  dot.className = 'presence-dot' + (db.isOnline(person) ? '' : ' off');
+  av.append(dot);
+  btn.append(av);
+  const body = document.createElement('div');
+  body.className = 'convo-item-body';
+  body.innerHTML = '<div class="convo-item-top"><span class="convo-item-name"></span></div><div class="search-hit-snippet"></div>';
+  body.querySelector('.convo-item-name').textContent = person.name;
+  body.querySelector('.search-hit-snippet').textContent = personSubtitle(person);
+  btn.append(body);
+  btn.setAttribute('aria-label', `${person.name}, ${personSubtitle(person)}. Open conversation.`);
+  btn.addEventListener('click', () => onOpen(person));
+  row.append(btn, contactToggleBtn(person));
+  return row;
+}
+
+function renderContactsList() {
+  const list = $('#convo-list');
+  list.innerHTML = '';
+  const people = db.contactUsers(me.id).sort((a, b) => {
+    if (!!a.retired !== !!b.retired) return a.retired ? 1 : -1;
+    const oa = db.isOnline(a) ? 0 : 1;
+    const ob = db.isOnline(b) ? 0 : 1;
+    return oa !== ob ? oa - ob : a.name.localeCompare(b.name);
+  });
+  if (!people.length) {
+    const empty = document.createElement('p');
+    empty.className = 'convo-empty';
+    empty.textContent = 'No contacts yet. Search for someone above, or open “New conversation”, and press the add-to-contacts button next to their name.';
+    list.append(empty);
+    return;
+  }
+  for (const person of people) {
+    list.append(personRow(person, {
+      onOpen: (p) => {
+        const convo = db.ensureDm(me.id, p.id);
+        openConvo(convo.id);
+      },
+    }));
+  }
+}
+
 /* ---------- global search ---------- */
 
 function renderGlobalSearch(q) {
@@ -319,7 +401,15 @@ function renderGlobalSearch(q) {
       b.querySelector('.convo-item-name').textContent = view.title;
       btn.append(b);
       btn.addEventListener('click', () => { clearGlobalSearch(); openConvo(convo.id); });
-      results.append(btn);
+      // A DM you already have is still a person you may want in contacts.
+      if (view.other) {
+        const row = document.createElement('div');
+        row.className = 'person-row';
+        row.append(btn, contactToggleBtn(view.other));
+        results.append(row);
+      } else {
+        results.append(btn);
+      }
     }
   }
   // People you haven't opened a conversation with yet — searching a colleague
@@ -331,27 +421,14 @@ function renderGlobalSearch(q) {
   if (peopleHits.length) {
     addHeading('People');
     for (const person of peopleHits) {
-      const btn = document.createElement('button');
-      btn.className = 'convo-item';
-      const av = avatarEl(person);
-      const dot = document.createElement('span');
-      dot.className = 'presence-dot' + (db.isOnline(person) ? '' : ' off');
-      av.append(dot);
-      btn.append(av);
-      const b = document.createElement('div');
-      b.className = 'convo-item-body';
-      b.innerHTML = '<div class="convo-item-top"><span class="convo-item-name"></span></div><div class="search-hit-snippet"></div>';
-      b.querySelector('.convo-item-name').textContent = person.name;
-      b.querySelector('.search-hit-snippet').textContent = personSubtitle(person);
-      btn.append(b);
-      btn.setAttribute('aria-label', `${person.name}, ${personSubtitle(person)}. Start a conversation.`);
-      btn.addEventListener('click', () => {
-        clearGlobalSearch();
-        const convo = db.ensureDm(me.id, person.id);
-        renderSidebar();
-        openConvo(convo.id);
-      });
-      results.append(btn);
+      results.append(personRow(person, {
+        onOpen: (p) => {
+          clearGlobalSearch();
+          const convo = db.ensureDm(me.id, p.id);
+          renderSidebar();
+          openConvo(convo.id);
+        },
+      }));
     }
   }
 
@@ -453,6 +530,15 @@ function renderConvoHeader() {
   pinBtn.title = meta.pinned ? 'Unpin conversation' : 'Pin conversation';
   pinBtn.setAttribute('aria-label', pinBtn.title);
   $('#mute-label').textContent = meta.muted ? 'Unmute notifications' : 'Mute notifications';
+
+  // Contacts apply to a person, so the menu item only makes sense in a DM.
+  const contactItem = $('#convo-menu [data-action="contact"]');
+  contactItem.hidden = !view.other;
+  if (view.other) {
+    const has = db.isContact(me.id, view.other.id);
+    $('#contact-label').textContent = has ? 'Remove from contacts' : 'Add to contacts';
+    $('#contact-menu-icon').setAttribute('href', has ? '#i-user-check' : '#i-user-plus');
+  }
 }
 
 function dayKey(ts) { return new Date(ts).toDateString(); }
@@ -1125,6 +1211,7 @@ function exportAllData() {
     app: 'Relay',
     user: { id: me.id, name: me.name, email: me.email },
     settings: getSettings(),
+    contacts: db.contactUsers(me.id).map((u) => ({ id: u.id, name: u.name, email: u.email })),
     conversations: convos,
   };
   downloadFile(`relay-export-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify(payload, null, 2));
@@ -1174,12 +1261,27 @@ function renderDirectory(q) {
     list.innerHTML = '<p class="convo-empty">Nobody matches that search.</p>';
     return;
   }
+  let headed = null;
   for (const person of people) {
+    // With no search term, split the directory into your contacts and everyone
+    // else so the people you actually talk to are reachable first.
+    const bucket = db.isContact(me.id, person.id) ? 'Contacts' : 'Everyone else';
+    if (!q.trim() && bucket !== headed && people.some((p) => db.isContact(me.id, p.id))) {
+      headed = bucket;
+      const h = document.createElement('p');
+      h.className = 'dir-heading';
+      h.textContent = bucket;
+      list.append(h);
+    }
+
+    const row = document.createElement('div');
+    row.className = 'person-row';
+    row.setAttribute('role', 'listitem');
+
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'directory-item';
-    item.setAttribute('role', 'option');
-    item.setAttribute('aria-selected', String(selected.has(person.id)));
+    if (groupMode) item.setAttribute('aria-pressed', String(selected.has(person.id)));
     const av = avatarEl(person);
     const dot = document.createElement('span');
     dot.className = 'presence-dot' + (db.isOnline(person) ? '' : ' off');
@@ -1196,7 +1298,7 @@ function renderDirectory(q) {
     item.addEventListener('click', () => {
       if (groupMode) {
         selected.has(person.id) ? selected.delete(person.id) : selected.add(person.id);
-        item.setAttribute('aria-selected', String(selected.has(person.id)));
+        item.setAttribute('aria-pressed', String(selected.has(person.id)));
         updateNewChatState();
       } else {
         $('#new-chat-dialog').close();
@@ -1205,7 +1307,8 @@ function renderDirectory(q) {
         openConvo(convo.id);
       }
     });
-    list.append(item);
+    row.append(item, contactToggleBtn(person));
+    list.append(row);
   }
 }
 
@@ -1294,6 +1397,14 @@ function wireStoreEvents() {
   db.on('remote:reads', rerender);
   db.on('typing', ({ convoId, userId, name }) => { if (userId !== me.id) showTyping(convoId, name); });
   db.on('remote:typing', ({ convoId, userId, name }) => { if (userId !== me.id) showTyping(convoId, name); });
+  const contactsChanged = ({ userId }) => {
+    if (userId !== me.id) return;
+    renderSidebar();
+    if (activeConvoId) renderConvoHeader();
+    if ($('#new-chat-dialog').open) renderDirectory($('#new-chat-search').value);
+  };
+  db.on('contacts', contactsChanged);
+  db.on('remote:contacts', contactsChanged);
   db.on('presence-changed', () => { renderSidebar(); if (activeConvoId) renderConvoHeader(); });
   db.on('remote:wipe', () => location.reload());
 
@@ -1426,6 +1537,16 @@ function wireConvoPane() {
     if (!action) return;
     closeMenus();
     const meta = db.convoMeta(me.id, activeConvoId);
+    if (action === 'contact') {
+      const other = convoView(db.getConvo(activeConvoId)).other;
+      if (other) {
+        const had = db.isContact(me.id, other.id);
+        if (had) db.removeContact(me.id, other.id);
+        else db.addContact(me.id, other.id);
+        renderConvoHeader();
+        toast(had ? `${other.name} removed from contacts` : `${other.name} added to contacts`, 'success');
+      }
+    }
     if (action === 'mute') {
       db.setConvoMeta(me.id, activeConvoId, { muted: !meta.muted });
       renderConvoHeader();

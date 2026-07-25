@@ -140,6 +140,34 @@ export function setConvoMeta(userId, convoId, patch) {
   store.write(`cmeta:${userId}`, all);
 }
 
+/* ---------- Contacts ---------- */
+
+export function contactsOf(userId) { return store.read(`contacts:${userId}`, []); }
+export function isContact(userId, otherId) { return contactsOf(userId).includes(otherId); }
+
+export function addContact(userId, otherId) {
+  const list = contactsOf(userId);
+  if (list.includes(otherId) || userId === otherId) return;
+  store.write(`contacts:${userId}`, [...list, otherId]);
+  emit('contacts', { userId });
+  broadcast('contacts', { userId });
+}
+
+export function removeContact(userId, otherId) {
+  store.write(`contacts:${userId}`, contactsOf(userId).filter((id) => id !== otherId));
+  emit('contacts', { userId });
+  broadcast('contacts', { userId });
+}
+
+/** Contacts resolved to user records. Ids whose user has been fully deleted
+    (e.g. a pruned guest) are dropped from the stored list on the way through. */
+export function contactUsers(userId) {
+  const list = contactsOf(userId);
+  const live = list.filter((id) => getUser(id));
+  if (live.length !== list.length) store.write(`contacts:${userId}`, live);
+  return live.map((id) => getUser(id));
+}
+
 /* ---------- Messages ---------- */
 
 export function messagesOf(convoId) { return store.read(`msgs:${convoId}`, []); }

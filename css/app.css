@@ -686,6 +686,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 
 .sidebar-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
   padding: 0.6rem 0.75rem 0.4rem;
 }
@@ -1203,12 +1204,27 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   color: var(--text);
 }
 .directory-item:hover { background: var(--sunken); }
-.directory-item[aria-selected="true"] { background: var(--accent-soft); }
+.directory-item[aria-pressed="true"] { background: var(--accent-soft); }
 .directory-item .dir-name { font-weight: 600; font-size: 0.9375rem; }
 .directory-item .dir-role { font-size: 0.8125rem; color: var(--text-2); }
 .directory-item .sel-mark { margin-left: auto; color: var(--accent); visibility: hidden; }
-.directory-item[aria-selected="true"] .sel-mark { visibility: visible; }
+.directory-item[aria-pressed="true"] .sel-mark { visibility: visible; }
 .group-compose { border-top: 1px solid var(--border); margin-top: 0.75rem; padding-top: 0.9rem; }
+
+/* Rows that pair a person button with an add-to-contacts toggle. A row is a
+   flex wrapper because interactive elements must not nest. */
+.person-row { display: flex; align-items: center; gap: 0.25rem; }
+.person-row > .directory-item, .person-row > .convo-item { flex: 1; min-width: 0; }
+.contact-toggle { color: var(--text-3); flex: none; }
+.contact-toggle:hover { color: var(--text); }
+.contact-toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.dir-heading {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  padding: 0.6rem 0.6rem 0.2rem;
+}
 
 /* ---------- Toasts ---------- */
 .toasts {

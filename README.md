@@ -45,6 +45,10 @@ one tab can't sign your real account out of the others.
 - Search that finds people as well as text: the top bar searches conversations,
   **people** (by name, email or role — click to start the chat) and full message
   history; conversations have their own search with match cycling
+- **Contacts** — add anyone you can find, registered users and signed-in guests
+  alike, from the search results, the New-conversation directory or the
+  conversation menu. Contacts get their own sidebar tab, sort to the top of
+  search and the directory, and are included in your JSON export
 - Groups, message formatting (`**bold**`, `*italic*`, `` `code` ``, auto-links),
   day separators, "new messages" jump chip, per-conversation TXT export and a full
   JSON data export
