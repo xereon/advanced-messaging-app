@@ -103,6 +103,14 @@ export function convosFor(userId) {
   return Object.values(allConvos()).filter((c) => c.members.includes(userId));
 }
 
+export function removeConvo(convoId) {
+  const convos = allConvos();
+  delete convos[convoId];
+  store.write('convos', convos);
+  store.remove(`msgs:${convoId}`);
+  store.remove(`reads:${convoId}`);
+}
+
 export function dmId(a, b) { return 'dm:' + [a, b].sort().join('~'); }
 
 export function ensureDm(a, b) {
@@ -196,6 +204,10 @@ export function unreadCount(convoId, userId, clearedBefore = 0) {
 
 export function setSession(userId, method, remember) {
   sessionStorage.setItem(NS + 'session', JSON.stringify({ userId, method, at: Date.now() }));
+  // Guest sessions are per-tab and ephemeral: they must not overwrite the
+  // device's remembered account, or signing in as a guest in one tab would
+  // silently sign the real account out of every future tab.
+  if (method === 'guest') return;
   const device = store.read('device', {});
   store.write('device', { ...device, lastUserId: userId, remember: !!remember });
 }
@@ -208,6 +220,38 @@ export function clearSession() {
   store.write('device', { ...device, remember: false });
 }
 export function deviceInfo() { return store.read('device', {}); }
+
+/* ---------- Guest lifecycle ---------- */
+
+/** True if anyone would notice this guest disappearing — i.e. the guest spoke,
+    or a real person spoke to them. The seeded bot welcome messages don't count. */
+export function guestHasHistory(userId) {
+  return convosFor(userId).some((c) => messagesOf(c.id).some(
+    (m) => !m.deletedAt && (m.from === userId || !getUser(m.from)?.isBot),
+  ));
+}
+
+/** Drop a guest and their bot-only conversations, or retire them (keeping the
+    profile so their name still renders in other people's history). */
+export function releaseGuest(user) {
+  if (guestHasHistory(user.id)) {
+    saveUser({ ...user, retired: true });
+    return 'retired';
+  }
+  for (const c of convosFor(user.id)) removeConvo(c.id);
+  deleteUser(user.id);
+  return 'removed';
+}
+
+/** Guests whose tab was closed without signing out linger forever. Clear out
+    yesterday's abandoned ones so the people directory stays honest. */
+export function pruneGuests(exceptId) {
+  const cutoff = Date.now() - 86400000;
+  for (const u of Object.values(allUsers())) {
+    if (!u.isGuest || u.retired || u.id === exceptId || u.createdAt > cutoff) continue;
+    releaseGuest(u);
+  }
+}
 
 /* ---------- Presence (heartbeat over BroadcastChannel) ---------- */
 

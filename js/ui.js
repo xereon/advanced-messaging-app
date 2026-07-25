@@ -118,10 +118,10 @@ function convoView(convo) {
   const otherId = convo.members.find((m) => m !== me.id) || me.id;
   const other = db.getUser(otherId);
   return {
-    title: other?.name || 'Unknown user',
+    title: other?.name || 'Former guest',
     color: other?.avatarColor,
     other,
-    subtitle: other?.isBot ? other.role : (other ? (db.isOnline(other) ? 'Online' : 'Offline') : ''),
+    subtitle: other ? personSubtitle(other) : 'This guest session has ended',
   };
 }
 
@@ -154,6 +154,41 @@ const STATUS_META = {
   delivered: { icon: 'i-check-double', label: 'Delivered' },
   read: { icon: 'i-check-double', label: 'Read' },
 };
+
+/* ================= people search ================= */
+
+/** Everyone you could start a conversation with: colleagues, bots and any
+    guest currently signed in — but not yourself and not retired guests. */
+function directoryPeople() {
+  return Object.values(db.allUsers()).filter((u) => u.id !== me.id && !u.retired);
+}
+
+function personSubtitle(person) {
+  const presence = db.isOnline(person) ? 'Online' : 'Offline';
+  if (person.isBot) return `${person.role} · ${presence}`;
+  if (person.isGuest) return `Guest · ${presence}`;
+  return person.role ? `${person.role} · ${presence}` : presence;
+}
+
+/** Match on name, email and role so "priya", "priya@", "design" and
+    "helpdesk" all find the right person. */
+function personMatches(user, needle) {
+  if (!needle) return true;
+  return [user.name, user.email, user.role, user.isGuest ? 'guest' : '']
+    .filter(Boolean)
+    .some((field) => String(field).toLowerCase().includes(needle));
+}
+
+function searchPeople(q) {
+  const needle = String(q).trim().toLowerCase();
+  return directoryPeople()
+    .filter((u) => personMatches(u, needle))
+    .sort((a, b) => {
+      const oa = db.isOnline(a) ? 0 : 1;
+      const ob = db.isOnline(b) ? 0 : 1;
+      return oa !== ob ? oa - ob : a.name.localeCompare(b.name);
+    });
+}
 
 /* ================= sidebar ================= */
 
@@ -287,6 +322,39 @@ function renderGlobalSearch(q) {
       results.append(btn);
     }
   }
+  // People you haven't opened a conversation with yet — searching a colleague
+  // by name, email or role should be able to start the chat.
+  const shownConvoIds = new Set(convoHits.map((c) => c.id));
+  const peopleHits = searchPeople(q)
+    .filter((u) => !shownConvoIds.has(db.dmId(me.id, u.id)))
+    .slice(0, 8);
+  if (peopleHits.length) {
+    addHeading('People');
+    for (const person of peopleHits) {
+      const btn = document.createElement('button');
+      btn.className = 'convo-item';
+      const av = avatarEl(person);
+      const dot = document.createElement('span');
+      dot.className = 'presence-dot' + (db.isOnline(person) ? '' : ' off');
+      av.append(dot);
+      btn.append(av);
+      const b = document.createElement('div');
+      b.className = 'convo-item-body';
+      b.innerHTML = '<div class="convo-item-top"><span class="convo-item-name"></span></div><div class="search-hit-snippet"></div>';
+      b.querySelector('.convo-item-name').textContent = person.name;
+      b.querySelector('.search-hit-snippet').textContent = personSubtitle(person);
+      btn.append(b);
+      btn.setAttribute('aria-label', `${person.name}, ${personSubtitle(person)}. Start a conversation.`);
+      btn.addEventListener('click', () => {
+        clearGlobalSearch();
+        const convo = db.ensureDm(me.id, person.id);
+        renderSidebar();
+        openConvo(convo.id);
+      });
+      results.append(btn);
+    }
+  }
+
   if (msgHits.length) {
     addHeading('Messages');
     for (const { convo, m } of msgHits) {
@@ -311,7 +379,7 @@ function renderGlobalSearch(q) {
       results.append(btn);
     }
   }
-  if (!convoHits.length && !msgHits.length) {
+  if (!convoHits.length && !peopleHits.length && !msgHits.length) {
     const p = document.createElement('p');
     p.className = 'convo-empty';
     p.textContent = `No results for “${q}”.`;
@@ -373,7 +441,7 @@ function renderConvoHeader() {
     const dot = document.createElement('span');
     dot.className = 'presence-dot' + (db.isOnline(view.other) ? '' : ' off');
     dot.setAttribute('aria-hidden', 'true');
-    sub.append(dot, document.createTextNode(view.subtitle + (view.other.isBot ? ' · Online' : '')));
+    sub.append(dot, document.createTextNode(view.subtitle));
   } else {
     const names = convo.members.filter((m) => m !== me.id)
       .map((m) => db.getUser(m)?.name.split(' ')[0] || '?').join(', ');
@@ -1101,11 +1169,7 @@ function openNewChat() {
 function renderDirectory(q) {
   const list = $('#directory-list');
   list.innerHTML = '';
-  const needle = q.trim().toLowerCase();
-  const people = Object.values(db.allUsers())
-    .filter((u) => u.id !== me.id && !u.isGuest)
-    .filter((u) => !needle || u.name.toLowerCase().includes(needle) || (u.role || '').toLowerCase().includes(needle))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const people = searchPeople(q);
   if (!people.length) {
     list.innerHTML = '<p class="convo-empty">Nobody matches that search.</p>';
     return;
@@ -1116,11 +1180,15 @@ function renderDirectory(q) {
     item.className = 'directory-item';
     item.setAttribute('role', 'option');
     item.setAttribute('aria-selected', String(selected.has(person.id)));
-    item.append(avatarEl(person));
+    const av = avatarEl(person);
+    const dot = document.createElement('span');
+    dot.className = 'presence-dot' + (db.isOnline(person) ? '' : ' off');
+    av.append(dot);
+    item.append(av);
     const body = document.createElement('div');
     body.innerHTML = '<div class="dir-name"></div><div class="dir-role"></div>';
     body.querySelector('.dir-name').textContent = person.name;
-    body.querySelector('.dir-role').textContent = person.isBot ? `${person.role} · responds instantly` : (person.role || 'Colleague');
+    body.querySelector('.dir-role').textContent = personSubtitle(person);
     const mark = document.createElement('span');
     mark.className = 'sel-mark';
     mark.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>';
@@ -1303,7 +1371,10 @@ function renderMe() {
 
 function doSignOut() {
   db.clearSession();
-  if (me.isGuest) db.deleteUser(me.id);
+  // A guest who actually chatted keeps their profile (retired, so they leave
+  // the directory) — otherwise everyone they spoke to would be left with a
+  // conversation attributed to "Unknown user".
+  if (me.isGuest) db.releaseGuest(me);
   signOutCb?.();
 }
 

@@ -32,8 +32,10 @@ export function renderRich(text) {
 }
 
 export function initials(name) {
-  const parts = String(name).trim().split(/\s+/).slice(0, 2);
-  return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || '?';
+  const parts = String(name)
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  return parts.map((p) => p[0].toUpperCase()).join('') || '?';
 }
 
 export function fmtTime(ts, use24h) {

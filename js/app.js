@@ -191,6 +191,7 @@ function renderPinUnlock() {
 /* ---------- boot ---------- */
 
 const session = db.getSession();
+db.pruneGuests(session?.userId);
 const restored = session && db.getUser(session.userId);
 if (restored) {
   enterApp(restored, session.method, device.remember);

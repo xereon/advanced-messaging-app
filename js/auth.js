@@ -176,16 +176,31 @@ export async function magicVerify(email, code) {
 
 /* ---------- guest ---------- */
 
-const GUEST_NAMES = ['Visiting Falcon', 'Curious Otter', 'Quiet Heron', 'Bold Lynx', 'Swift Ibis'];
+const GUEST_NAMES = [
+  'Visiting Falcon', 'Curious Otter', 'Quiet Heron', 'Bold Lynx', 'Swift Ibis',
+  'Calm Marten', 'Keen Osprey', 'Bright Vixen', 'Steady Badger', 'Nimble Kestrel',
+];
+const GUEST_COLORS = ['#334155', '#0E7490', '#4D7C0F', '#7C4DDB', '#B45309', '#B0367A'];
 
+/** Concurrent guests each get a name and colour nobody else is using, so two
+    people signed in as guests can tell each other apart in the directory. */
 export function createGuest() {
-  const n = GUEST_NAMES[Math.floor(Math.random() * GUEST_NAMES.length)];
+  const guests = Object.values(allUsers()).filter((u) => u.isGuest && !u.retired);
+  const taken = new Set(guests.map((u) => u.name));
+  let name = GUEST_NAMES.find((n) => !taken.has(n));
+  if (!name) {
+    let n = 2;
+    while (taken.has(`${GUEST_NAMES[0]} ${n}`)) n++;
+    name = `${GUEST_NAMES[0]} ${n}`;
+  }
+  const usedColors = new Set(guests.map((u) => u.avatarColor));
   const user = {
     id: uid('u'),
-    name: `Guest (${n})`,
+    name,
     email: null,
     isGuest: true,
-    avatarColor: '#334155',
+    role: 'Guest',
+    avatarColor: GUEST_COLORS.find((c) => !usedColors.has(c)) || GUEST_COLORS[guests.length % GUEST_COLORS.length],
     createdAt: Date.now(),
   };
   saveUser(user);

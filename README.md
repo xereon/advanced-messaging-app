@@ -29,7 +29,10 @@ Then open <http://localhost:8123>. Under XAMPP it also works straight from
 | **Quick-unlock PIN** | 4–6 digits, per device, offered on the login screen for the last account |
 | **Passkey (WebAuthn)** | Real `navigator.credentials` flow; register under Settings → Account & security |
 | **One-time email code** | Demo inbox shows the 6-digit code on screen (no real email is sent) |
-| **Guest** | Instant ephemeral session, deleted on sign-out |
+| **Guest** | Instant ephemeral session. Several guests can be signed in at once, each getting a unique name and avatar colour, and they can find and message each other. A guest who never chatted is removed on sign-out; one who did is retired — they leave the directory but their name still renders in everyone else's history. |
+
+Guest sign-in never disturbs the device's remembered account, so a guest session in
+one tab can't sign your real account out of the others.
 
 ## Messaging features
 
@@ -39,8 +42,9 @@ Then open <http://localhost:8123>. Under XAMPP it also works straight from
 - Delivery states with distinct icons (sent ✓, delivered ✓✓, read), typing indicators,
   read receipts you can turn off, emoji reactions, replies with quoting, editing,
   deleting, drafts per conversation, pinning, muting, unread badges and dividers
-- Global search (conversations + full-text messages) and in-conversation search with
-  match cycling
+- Search that finds people as well as text: the top bar searches conversations,
+  **people** (by name, email or role — click to start the chat) and full message
+  history; conversations have their own search with match cycling
 - Groups, message formatting (`**bold**`, `*italic*`, `` `code` ``, auto-links),
   day separators, "new messages" jump chip, per-conversation TXT export and a full
   JSON data export
