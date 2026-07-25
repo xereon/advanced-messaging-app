@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<meta name="description" content="Relay — a simple, accessible, enterprise-grade messaging demo. Runs entirely in your browser.">
+<meta name="description" content="Relay — an accessible, enterprise-grade messaging app.">
 <title>Relay — Enterprise Messaging</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232458E6'/%3E%3Cpath d='M9 21.5V12a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3h-6.5L9 22.5v-1z' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/app.css">
@@ -152,7 +152,7 @@
       <p class="auth-switch"><button type="button" class="link-btn" data-goto="signin"><svg class="icon sm" aria-hidden="true"><use href="#i-chevron-left"/></svg>Back to sign in</button></p>
     </form>
   </div>
-  <p class="auth-footnote">Relay is a local demo — accounts, messages and settings are stored only in this browser. Nothing leaves your machine.</p>
+  <p class="auth-footnote">Your messages and settings live on your Relay server and follow you between devices.</p>
 </section>
 
 <!-- ============ APP SHELL ============ -->
@@ -373,7 +373,7 @@
           </div>
           <div class="security-row">
             <div><strong>Passkey</strong><p class="hint" id="passkey-status">Not registered</p></div>
-            <button class="btn" id="btn-add-passkey">Add passkey</button>
+            <button class="btn" id="btn-add-passkey" disabled>Add passkey</button>
           </div>
           <div class="security-row">
             <div><strong>Password</strong><p class="hint">Used for standard sign-in</p></div>
@@ -382,7 +382,7 @@
         </div>
         <h3>Session</h3>
         <div class="security-row">
-          <div><strong>Sign out</strong><p class="hint">Ends this session on this tab</p></div>
+          <div><strong>Sign out</strong><p class="hint">Ends this session on this device</p></div>
           <button class="btn" id="btn-signout">Sign out</button>
         </div>
         <div class="security-row">
@@ -393,13 +393,13 @@
 
       <section class="settings-panel" data-panel="data" hidden aria-label="Data and privacy settings">
         <h3>Your data</h3>
-        <p class="hint">Relay stores everything locally in this browser (localStorage). No servers, no tracking, no analytics.</p>
+        <p class="hint">Relay stores your account on its own server. No third-party tracking, no analytics.</p>
         <div class="security-row">
           <div><strong>Export my data</strong><p class="hint">Download all conversations and settings as JSON</p></div>
           <button class="btn" id="btn-export-data"><svg class="icon sm" aria-hidden="true"><use href="#i-download"/></svg>Export</button>
         </div>
         <div class="security-row">
-          <div><strong>Storage used</strong><p class="hint" id="storage-usage">—</p></div>
+          <div><strong>Stored on the server</strong><p class="hint" id="storage-usage">—</p></div>
           <button class="btn" id="btn-refresh-storage">Refresh</button>
         </div>
         <div class="security-row">
@@ -407,8 +407,8 @@
           <button class="btn" id="btn-reset-settings">Reset</button>
         </div>
         <div class="security-row">
-          <div><strong>Erase all demo data</strong><p class="hint">Deletes every account, conversation and setting in this browser</p></div>
-          <button class="btn danger" id="btn-wipe">Erase…</button>
+          <div><strong>Delete everything</strong><p class="hint">Permanently removes your account, messages and settings from the server</p></div>
+          <button class="btn danger" id="btn-wipe">Delete…</button>
         </div>
       </section>
 
@@ -435,7 +435,7 @@
         preferences, and themes designed for deuteranopia, protanopia, tritanopia and monochrome vision.
         Status is always conveyed with icons and text, never colour alone.</p>
         <h3>About</h3>
-        <p class="hint">Relay v1.0 — a dependency-free messaging demo. Built with plain HTML, CSS and JavaScript. All data stays in your browser.</p>
+        <p class="hint">Relay v2.0 — an accessible messaging app with no runtime dependencies: plain HTML, CSS and JavaScript on the front end, Node and SQLite on the back.</p>
       </section>
     </div>
   </div>
@@ -528,6 +528,7 @@
   </div>
 </dialog>
 
+<p id="connection-banner" class="connection-banner" role="status" hidden></p>
 <div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
 <div id="sr-announcer" class="visually-hidden" aria-live="polite"></div>
 

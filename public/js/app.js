@@ -1,26 +1,24 @@
-// app.js — boot: seed demo data, drive the auth screen, hand over to the chat UI.
+// app.js — boot: restore a session if one exists, otherwise drive the sign-in
+// screen. All credential checking happens on the server.
 
 import { $, $$, initials } from './util.js';
+import * as api from './api.js';
 import * as db from './store.js';
-import * as auth from './auth.js';
-import { seedBots, seedConvosFor } from './bots.js';
-import { loadSettings, applySettings } from './settings.js';
+import { passwordStrength } from './palette.js';
+import { loadCachedSettings, applySettings } from './settings.js';
 import { initUI } from './ui.js';
 
-seedBots();
-
-// Apply the last user's saved theme to the login screen too, so a returning
+// Paint the last account's theme before anything else, so a returning
 // dark-mode user is not flashed with a bright page.
 const device = db.deviceInfo();
-if (device.lastUserId) loadSettings(device.lastUserId);
+loadCachedSettings(device.lastUserId);
 applySettings();
 
 /* ---------- helpers ---------- */
 
 function showView(name) {
   for (const view of $$('.auth-view')) view.hidden = view.dataset.view !== name;
-  const first = $(`.auth-view[data-view="${name}"] input:not([type="hidden"])`);
-  first?.focus();
+  $(`.auth-view[data-view="${name}"] input:not([type="hidden"])`)?.focus();
 }
 
 function fieldError(sel, msg) {
@@ -31,9 +29,16 @@ function fieldError(sel, msg) {
   input?.setAttribute('aria-invalid', msg ? 'true' : 'false');
 }
 
-function enterApp(user, method, remember = false) {
-  db.setSession(user.id, method, remember);
-  seedConvosFor(user);
+function busy(form, on) {
+  for (const el of form.querySelectorAll('button, input')) el.disabled = on;
+}
+
+async function enterApp(user) {
+  // A guest session must not overwrite the remembered real account.
+  db.rememberDevice(user.isGuest
+    ? {}
+    : { lastUserId: user.id, lastUserName: user.name, hasPin: user.hasPin });
+  db.hydrate(await api.bootstrap());
   initUI(user, { onSignOut: () => location.reload() });
 }
 
@@ -62,21 +67,22 @@ $('#signin-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   fieldError('#signin-email-err');
   fieldError('#signin-password-err');
-  const email = $('#signin-email').value.trim();
-  const password = $('#signin-password').value;
-  if (!email) return fieldError('#signin-email-err', 'Enter your email address.');
-  const user = db.findUserByEmail(email);
-  if (!user || !user.hash) return fieldError('#signin-email-err', 'No account found for that email.');
-  if (!(await auth.verifyPassword(user, password))) {
-    return fieldError('#signin-password-err', 'Incorrect password. Try again, or use another sign-in method.');
+  const form = e.currentTarget;
+  busy(form, true);
+  try {
+    const { user } = await api.login($('#signin-email').value.trim(), $('#signin-password').value);
+    await enterApp(user);
+  } catch (err) {
+    fieldError('#signin-password-err', err.message);
+  } finally {
+    busy(form, false);
   }
-  enterApp(user, 'password', $('#remember-me').checked);
 });
 
 /* ---------- sign up ---------- */
 
 $('#signup-password').addEventListener('input', () => {
-  const { score, label } = auth.passwordStrength($('#signup-password').value);
+  const { score, label } = passwordStrength($('#signup-password').value);
   const bar = $('#pw-meter-bar');
   bar.style.width = `${Math.min(score, 5) * 20}%`;
   bar.className = score >= 4 ? 'good' : score >= 3 ? 'ok' : '';
@@ -85,20 +91,23 @@ $('#signup-password').addEventListener('input', () => {
 
 $('#signup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  fieldError('#signup-name-err');
-  fieldError('#signup-email-err');
-  fieldError('#signup-password-err');
+  for (const sel of ['#signup-name-err', '#signup-email-err', '#signup-password-err']) fieldError(sel);
   const name = $('#signup-name').value.trim();
   const email = $('#signup-email').value.trim();
   const password = $('#signup-password').value;
   if (!name) return fieldError('#signup-name-err', 'Enter your name.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fieldError('#signup-email-err', 'Enter a valid email address.');
   if (password.length < 8) return fieldError('#signup-password-err', 'Password must be at least 8 characters.');
+
+  const form = e.currentTarget;
+  busy(form, true);
   try {
-    const user = await auth.createAccount({ name, email, password });
-    enterApp(user, 'password', true);
+    const { user } = await api.signup(name, email, password);
+    await enterApp(user);
   } catch (err) {
-    fieldError('#signup-email-err', err.message);
+    fieldError(err.status === 409 ? '#signup-email-err' : '#signup-password-err', err.message);
+  } finally {
+    busy(form, false);
   }
 });
 
@@ -113,7 +122,7 @@ $('#btn-magic').addEventListener('click', () => {
 async function magicSend() {
   fieldError('#magic-email-err');
   try {
-    const code = await auth.magicStart($('#magic-email').value);
+    const { code } = await api.requestCode($('#magic-email').value.trim());
     $('#magic-demo-code').textContent = code;
     $('[data-magic-step="1"]').hidden = true;
     $('[data-magic-step="2"]').hidden = false;
@@ -129,8 +138,8 @@ $('#magic-form').addEventListener('submit', async (e) => {
   if ($('[data-magic-step="2"]').hidden) return magicSend();
   fieldError('#magic-code-err');
   try {
-    const user = await auth.magicVerify($('#magic-email').value, $('#magic-code').value);
-    enterApp(user, 'magic', $('#remember-me').checked);
+    const { user } = await api.verifyCode($('#magic-email').value.trim(), $('#magic-code').value);
+    await enterApp(user);
   } catch (err) {
     fieldError('#magic-code-err', err.message);
   }
@@ -138,24 +147,26 @@ $('#magic-form').addEventListener('submit', async (e) => {
 
 $('#magic-resend').addEventListener('click', magicSend);
 
-/* ---------- passkey ---------- */
+/* ---------- passkey (pending real WebAuthn verification) ---------- */
 
-$('#btn-passkey').addEventListener('click', async () => {
-  if (!auth.passkeysSupported()) {
-    return fieldError('#signin-email-err', 'Passkeys need https or localhost. Use another method here.');
-  }
-  try {
-    const user = await auth.passkeySignIn();
-    enterApp(user, 'passkey', $('#remember-me').checked);
-  } catch (err) {
-    if (err.name !== 'NotAllowedError') fieldError('#signin-email-err', err.message || 'Passkey sign-in failed.');
-  }
+$('#btn-passkey').addEventListener('click', () => {
+  fieldError('#signin-email-err',
+    'Passkey sign-in is not available yet — it needs server-side WebAuthn verification. Use your password or an email code.');
 });
 
 /* ---------- guest ---------- */
 
-$('#btn-guest').addEventListener('click', () => {
-  enterApp(auth.createGuest(), 'guest', false);
+$('#btn-guest').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const { user } = await api.guest();
+    await enterApp(user);
+  } catch (err) {
+    fieldError('#signin-email-err', err.message);
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 /* ---------- quick-unlock PIN ---------- */
@@ -163,42 +174,40 @@ $('#btn-guest').addEventListener('click', () => {
 function renderPinUnlock() {
   const slot = $('#pin-unlock-slot');
   slot.innerHTML = '';
-  const lastUser = device.lastUserId ? db.getUser(device.lastUserId) : null;
-  if (!lastUser?.pinHash) return;
+  if (!device.hasPin || !device.lastUserId) return;
 
   const box = document.createElement('div');
   box.className = 'pin-unlock';
   box.innerHTML = `
-    <span class="avatar" aria-hidden="true" style="--av-bg:${lastUser.avatarColor || '#334155'}">${initials(lastUser.name)}</span>
+    <span class="avatar" aria-hidden="true"></span>
     <div class="pin-unlock-info"><strong></strong><span>Unlock with your PIN</span></div>
-    <label class="visually-hidden" for="pin-unlock-input">PIN for ${lastUser.name}</label>
+    <label class="visually-hidden" for="pin-unlock-input">PIN</label>
     <input id="pin-unlock-input" type="password" inputmode="numeric" maxlength="6" placeholder="PIN" autocomplete="off">`;
-  box.querySelector('strong').textContent = lastUser.name;
+  box.querySelector('.avatar').textContent = initials(device.lastUserName || '?');
+  box.querySelector('strong').textContent = device.lastUserName || 'Your account';
   slot.append(box);
 
   const input = box.querySelector('input');
   input.addEventListener('input', async () => {
     if (input.value.length < 4) return;
-    if (await auth.verifyPin(lastUser, input.value)) {
-      enterApp(lastUser, 'pin', true);
-    } else if (input.value.length === 6) {
-      input.value = '';
-      fieldError('#signin-password-err', 'Wrong PIN — try again or sign in with your password.');
+    try {
+      const { user } = await api.pinLogin(device.lastUserId, input.value);
+      await enterApp(user);
+    } catch (err) {
+      if (input.value.length >= 6 || err.status === 429) {
+        input.value = '';
+        fieldError('#signin-password-err', err.message);
+      }
     }
   });
 }
 
 /* ---------- boot ---------- */
 
-const session = db.getSession();
-db.pruneGuests(session?.userId);
-const restored = session && db.getUser(session.userId);
-if (restored) {
-  enterApp(restored, session.method, device.remember);
-} else if (device.remember && device.lastUserId && db.getUser(device.lastUserId)) {
-  // "Keep me signed in" — restore without a prompt.
-  enterApp(db.getUser(device.lastUserId), 'remembered', true);
-} else {
+try {
+  const { user } = await api.me();
+  await enterApp(user);
+} catch {
   renderPinUnlock();
   showView('signin');
 }

@@ -1296,3 +1296,24 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   .dialog { width: calc(100vw - 1rem); max-height: 92vh; }
   .alt-auth { flex-direction: column; }
 }
+
+/* ---------- Connection banner ---------- */
+.connection-banner {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  background: var(--warning);
+  color: var(--surface);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.3rem 1rem;
+  border-radius: 0 0 var(--radius-s) var(--radius-s);
+}
+[data-theme="contrast-dark"] .connection-banner,
+[data-theme="mono"] .connection-banner { color: var(--bg); }
+
+/* Optimistic and failed messages */
+.msg.pending .bubble { opacity: 0.7; }
+.msg.failed .bubble { outline: 2px dashed var(--danger); }

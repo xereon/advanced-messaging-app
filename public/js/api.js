@@ -1,0 +1,96 @@
+// api.js — thin client for the Relay HTTP API.
+// The session lives in an httpOnly cookie, so nothing here handles tokens.
+
+export class ApiError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+async function request(method, path, body) {
+  const init = {
+    method,
+    credentials: 'same-origin',
+    headers: { 'X-Relay-Client': '1' },
+  };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  let res;
+  try {
+    res = await fetch(`/api${path}`, init);
+  } catch {
+    throw new ApiError(0, 'Cannot reach the server. Check your connection.');
+  }
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!res.ok) throw new ApiError(res.status, data.error || `Request failed (${res.status}).`);
+  return data;
+}
+
+export const get = (path) => request('GET', path);
+export const post = (path, body) => request('POST', path, body ?? {});
+export const patch = (path, body) => request('PATCH', path, body ?? {});
+export const put = (path, body) => request('PUT', path, body ?? {});
+export const del = (path) => request('DELETE', path);
+
+/* ---------- auth ---------- */
+
+export const signup = (name, email, password) => post('/auth/signup', { name, email, password });
+export const login = (email, password) => post('/auth/login', { email, password });
+export const guest = () => post('/auth/guest');
+export const requestCode = (email) => post('/auth/code/request', { email });
+export const verifyCode = (email, code) => post('/auth/code/verify', { email, code });
+export const pinLogin = (userId, pin) => post('/auth/pin', { userId, pin });
+export const logout = () => post('/auth/logout');
+export const me = () => get('/me');
+
+/* ---------- data ---------- */
+
+export const bootstrap = () => get('/bootstrap');
+export const searchUsers = (q) => get(`/users?q=${encodeURIComponent(q || '')}`);
+export const createConversation = (payload) => post('/conversations', payload);
+export const sendMessage = (convoId, payload) => post(`/conversations/${encodeURIComponent(convoId)}/messages`, payload);
+export const editMessage = (msgId, text) => patch(`/messages/${encodeURIComponent(msgId)}`, { text });
+export const deleteMessage = (msgId) => del(`/messages/${encodeURIComponent(msgId)}`);
+export const react = (msgId, emoji) => post(`/messages/${encodeURIComponent(msgId)}/reactions`, { emoji });
+export const markRead = (convoId, at, isPrivate) => post(`/conversations/${encodeURIComponent(convoId)}/read`, { at, private: !!isPrivate });
+export const setMeta = (convoId, meta) => patch(`/conversations/${encodeURIComponent(convoId)}/meta`, meta);
+export const sendTyping = (convoId) => post(`/conversations/${encodeURIComponent(convoId)}/typing`);
+export const addContact = (contactId) => post('/contacts', { contactId });
+export const removeContact = (contactId) => del(`/contacts/${encodeURIComponent(contactId)}`);
+export const updateProfile = (payload) => patch('/profile', payload);
+export const saveSettings = (settings) => put('/settings', { settings });
+export const setPin = (pin) => post('/account/pin', { pin });
+export const changePassword = (current, next) => post('/account/password', { current, next });
+export const deleteAccount = () => del('/account');
+export const exportData = () => get('/export');
+
+/* ---------- live stream ---------- */
+
+/** Opens the SSE stream. EventSource reconnects by itself and replays missed
+    events via Last-Event-ID, so callers only supply handlers. */
+export function openStream(handlers, { onStatus } = {}) {
+  let source = null;
+  let closed = false;
+
+  const connect = () => {
+    if (closed) return;
+    source = new EventSource('/api/events', { withCredentials: true });
+    source.onopen = () => onStatus?.('online');
+    source.onerror = () => {
+      onStatus?.('reconnecting');
+      // EventSource retries on its own unless the stream was closed outright.
+      if (source.readyState === EventSource.CLOSED && !closed) {
+        setTimeout(connect, 2000);
+      }
+    };
+    for (const [type, fn] of Object.entries(handlers)) {
+      source.addEventListener(type, (e) => {
+        try { fn(JSON.parse(e.data)); } catch { /* malformed frame */ }
+      });
+    }
+  };
+
+  connect();
+  return { close() { closed = true; source?.close(); } };
+}

@@ -2,3 +2,9 @@
 Thumbs.db
 node_modules/
 *.log
+
+# SQLite database and its write-ahead log
+data/
+*.db
+*.db-wal
+*.db-shm

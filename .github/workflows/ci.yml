@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # No runtime dependencies: the server uses node:http, node:sqlite and
+      # node:crypto only, so there is nothing to install.
+      - name: Check for unexpected dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json present but the project should have no dependencies" >&2
+            exit 1
+          fi
+
+      - name: Run tests
+        run: npm test
+
+      - name: Server starts cleanly
+        run: |
+          node server/index.js &
+          SERVER_PID=$!
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:8130/api/nope -o /dev/null -w '%{http_code}' | grep -q 404; then
+              echo "server responding"
+              break
+            fi
+            sleep 0.5
+          done
+          curl -sf http://localhost:8130/ | grep -q "<title>Relay" || { echo "app shell not served" >&2; kill $SERVER_PID; exit 1; }
+          kill $SERVER_PID

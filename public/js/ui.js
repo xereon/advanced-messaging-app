@@ -6,8 +6,7 @@ import {
 } from './util.js';
 import * as db from './store.js';
 import { getSettings, setSetting, resetSettings, THEMES, applySettings, loadSettings } from './settings.js';
-import { botRespond } from './bots.js';
-import * as auth from './auth.js';
+import { AVATAR_COLORS } from './palette.js';
 
 const REACT_SET = ['👍', '❤️', '😂', '🎉', '😮', '😢', '✅'];
 const EMOJI_SET = [
@@ -139,17 +138,18 @@ function lastActivity(convo) {
 function statusOf(msg, convo) {
   const others = convo.members.filter((m) => m !== msg.from);
   const reads = db.readsOf(convo.id);
-  // Recipients who have receipts turned off never show "read" to the sender.
-  const eligible = others.filter((u) => {
-    const s = db.store.read(`settings:${u}`, {});
-    return s.readReceipts !== false;
-  });
-  if (eligible.length && eligible.every((u) => (reads[u] || 0) >= msg.at)) return 'read';
+  // The server withholds reads from anyone who turned receipts off, so a
+  // missing entry here simply never resolves to 'read'.
+  if (msg.pending) return 'sending';
+  if (msg.failed) return 'failed';
+  if (others.length && others.every((u) => (reads[u] || 0) >= msg.at)) return 'read';
   if (msg.deliveredAt) return 'delivered';
   return 'sent';
 }
 
 const STATUS_META = {
+  sending: { icon: 'i-clock', label: 'Sending' },
+  failed: { icon: 'i-alert', label: 'Not sent — tap to retry' },
   sent: { icon: 'i-check', label: 'Sent' },
   delivered: { icon: 'i-check-double', label: 'Delivered' },
   read: { icon: 'i-check-double', label: 'Read' },
@@ -223,7 +223,7 @@ function searchPeople(q) {
 /* ================= sidebar ================= */
 
 function myConvos() {
-  return db.convosFor(me.id).sort((a, b) => {
+  return db.convosFor().sort((a, b) => {
     const pa = db.convoMeta(me.id, a.id).pinned ? 1 : 0;
     const pb = db.convoMeta(me.id, b.id).pinned ? 1 : 0;
     if (pa !== pb) return pb - pa;
@@ -347,8 +347,9 @@ function renderContactsList() {
   }
   for (const person of people) {
     list.append(personRow(person, {
-      onOpen: (p) => {
-        const convo = db.ensureDm(me.id, p.id);
+      onOpen: async (p) => {
+        const convo = await db.ensureDm(me.id, p.id);
+        renderSidebar();
         openConvo(convo.id);
       },
     }));
@@ -422,9 +423,9 @@ function renderGlobalSearch(q) {
     addHeading('People');
     for (const person of peopleHits) {
       results.append(personRow(person, {
-        onOpen: (p) => {
+        onOpen: async (p) => {
           clearGlobalSearch();
-          const convo = db.ensureDm(me.id, p.id);
+          const convo = await db.ensureDm(me.id, p.id);
           renderSidebar();
           openConvo(convo.id);
         },
@@ -603,7 +604,7 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
   const mine = m.from === me.id;
   const author = db.getUser(m.from);
   const el = document.createElement('div');
-  el.className = `msg ${mine ? 'out' : 'in'}${groupStart ? ' group-start' : ''}${groupEnd ? ' group-end' : ''}${m.deletedAt ? ' deleted' : ''}`;
+  el.className = `msg ${mine ? 'out' : 'in'}${groupStart ? ' group-start' : ''}${groupEnd ? ' group-end' : ''}${m.deletedAt ? ' deleted' : ''}${m.pending ? ' pending' : ''}${m.failed ? ' failed' : ''}`;
   el.dataset.msgId = m.id;
 
   if (!mine) {
@@ -678,7 +679,7 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
       chip.setAttribute('aria-pressed', String(users.includes(me.id)));
       chip.textContent = `${emoji} ${users.length}`;
       chip.title = names;
-      chip.addEventListener('click', () => db.toggleReaction(convo.id, m.id, emoji, me.id));
+      chip.addEventListener('click', () => db.toggleReaction(convo.id, m.id, emoji));
       row.append(chip);
     }
     body.append(row);
@@ -741,7 +742,7 @@ function openReactPalette(anchor, convoId, msgId) {
     b.setAttribute('role', 'menuitem');
     b.setAttribute('aria-label', `React with ${emoji}`);
     b.textContent = emoji;
-    b.addEventListener('click', () => { db.toggleReaction(convoId, msgId, emoji, me.id); closeReactPalette(); });
+    b.addEventListener('click', () => { db.toggleReaction(convoId, msgId, emoji); closeReactPalette(); });
     paletteEl.append(b);
   }
   document.body.append(paletteEl);
@@ -818,7 +819,7 @@ const broadcastTyping = (() => {
     const now = Date.now();
     if (now - last < 2500) return;
     last = now;
-    db.broadcast('typing', { convoId: activeConvoId, userId: me.id, name: me.name.split(' ')[0] });
+    db.sendTyping(activeConvoId);
   };
 })();
 
@@ -867,19 +868,14 @@ function sendCurrent() {
   const convo = db.getConvo(activeConvoId);
 
   if (editing) {
-    db.patchMessage(convo.id, editing.id, { text, editedAt: Date.now() });
+    db.patchMessage(convo.id, editing.id, { text });
     editing = null;
     $('#composer-context').hidden = true;
   } else {
-    const msg = {
-      id: uid('m'), convoId: convo.id, from: me.id, text,
-      at: Date.now(), replyTo: replyTo?.id || undefined,
-    };
-    db.appendMessage(convo.id, msg);
+    db.appendMessage(convo.id, { text, replyTo: replyTo?.id }).catch(() => { /* surfaced as a toast */ });
     db.markRead(convo.id, me.id);
     replyTo = null;
     $('#composer-context').hidden = true;
-    botRespond(convo.id, msg, me.id);
   }
   input.value = '';
   autosize(input);
@@ -1005,7 +1001,7 @@ function buildThemeGrid() {
 function buildAvatarColors() {
   const wrap = $('#avatar-colors');
   wrap.innerHTML = '';
-  for (const color of auth.AVATAR_COLORS) {
+  for (const color of AVATAR_COLORS) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'avatar-swatch';
@@ -1014,11 +1010,11 @@ function buildAvatarColors() {
     b.setAttribute('aria-checked', String(me.avatarColor === color));
     b.setAttribute('aria-label', `Avatar colour ${color}`);
     b.addEventListener('click', () => {
-      me.avatarColor = color;
-      db.saveUser(me);
-      buildAvatarColors();
-      renderMe();
-      renderSidebar();
+      db.updateProfile({ avatarColor: color }).then(() => {
+        buildAvatarColors();
+        renderMe();
+        renderSidebar();
+      }).catch((err) => toast(err.message, 'error'));
     });
     wrap.append(b);
   }
@@ -1037,24 +1033,22 @@ function syncSettingsInputs() {
   buildThemeGrid();
   buildAvatarColors();
   $('#set-display-name').value = me.name;
-  $('#pin-status').textContent = me.pinHash ? 'Enabled on this browser' : 'Not set';
-  $('#btn-set-pin').textContent = me.pinHash ? 'Change PIN' : 'Set PIN';
-  const pkRow = $('#btn-add-passkey').closest('.security-row');
-  if (!auth.passkeysSupported()) {
-    pkRow.querySelector('.hint').textContent = 'Unavailable — passkeys need https or localhost.';
-    $('#btn-add-passkey').disabled = true;
-  } else {
-    $('#passkey-status').textContent = me.passkeyId ? 'Registered in this browser' : 'Not registered';
-    $('#btn-add-passkey').textContent = me.passkeyId ? 'Re-register' : 'Add passkey';
-  }
+  $('#pin-status').textContent = me.hasPin ? 'Enabled for this account' : 'Not set';
+  $('#btn-set-pin').textContent = me.hasPin ? 'Change PIN' : 'Set PIN';
+  // Passkeys need server-side WebAuthn verification to mean anything. Rather
+  // than offer a control that looks like security and is not, it stays off
+  // until that lands.
+  $('#passkey-status').textContent = 'Not yet available — needs server-side WebAuthn verification.';
+  $('#btn-add-passkey').disabled = true;
   const pwRow = $('#btn-change-password').closest('.security-row');
   pwRow.hidden = !!me.isGuest;
   refreshStorageUsage();
 }
 
 function refreshStorageUsage() {
-  const kb = db.store.usageBytes() / 1024;
-  $('#storage-usage').textContent = kb < 1024 ? `${kb.toFixed(1)} KB of local storage` : `${(kb / 1024).toFixed(2)} MB of local storage`;
+  const convos = db.convosFor().length;
+  const msgs = db.convosFor().reduce((n, c) => n + db.messagesOf(c.id).length, 0);
+  $('#storage-usage').textContent = `${convos} conversations, ${msgs} messages stored on the server`;
 }
 
 function openSettings(panel = 'appearance') {
@@ -1092,6 +1086,7 @@ function wireSettings() {
       if (key === 'fontScale') $('#out-font-scale').textContent = `${value}%`;
       if (key === 'lineHeight') $('#out-line-height').textContent = value;
       if (key === 'letterSpacing') $('#out-letter-spacing').textContent = `${value}em`;
+      if (key === 'readReceipts') db.setReceiptsEnabled(value);
       if (key === 'use24h' || key === 'typingIndicators') { renderSidebar(); if (activeConvoId) renderMessages(); renderTyping(); }
     });
   }
@@ -1099,11 +1094,14 @@ function wireSettings() {
   $('#set-display-name').addEventListener('change', () => {
     const v = $('#set-display-name').value.trim();
     if (!v) { $('#set-display-name').value = me.name; return; }
-    me.name = v;
-    db.saveUser(me);
-    renderMe();
-    renderSidebar();
-    toast('Display name updated', 'success');
+    db.updateProfile({ name: v }).then(() => {
+      renderMe();
+      renderSidebar();
+      toast('Display name updated', 'success');
+    }).catch((err) => {
+      $('#set-display-name').value = me.name;
+      toast(err.message, 'error');
+    });
   });
 
   // PIN
@@ -1117,22 +1115,18 @@ function wireSettings() {
     const a = $('#pin-new').value, b = $('#pin-confirm').value;
     if (!/^\d{4,6}$/.test(a)) return showErr('#pin-err', 'PIN must be 4–6 digits.');
     if (a !== b) return showErr('#pin-err', 'PINs do not match.');
-    await auth.setPin(me, a);
-    $('#pin-dialog').close();
-    syncSettingsInputs();
-    toast('Quick-unlock PIN saved', 'success');
+    try {
+      await db.setPin(a);
+      me.hasPin = true;
+      db.rememberDevice({ lastUserId: me.id, lastUserName: me.name, hasPin: true });
+      $('#pin-dialog').close();
+      syncSettingsInputs();
+      toast('Quick-unlock PIN saved', 'success');
+    } catch (err) { showErr('#pin-err', err.message); }
   });
 
   // Passkey
-  $('#btn-add-passkey').addEventListener('click', async () => {
-    try {
-      await auth.registerPasskey(me);
-      syncSettingsInputs();
-      toast('Passkey registered — try it on your next sign-in.', 'success');
-    } catch (err) {
-      if (err.name !== 'NotAllowedError') toast(err.message || 'Passkey registration failed.', 'error');
-    }
-  });
+
 
   // Password change
   $('#btn-change-password').addEventListener('click', () => {
@@ -1144,9 +1138,10 @@ function wireSettings() {
     e.preventDefault();
     try {
       if ($('#pw-new').value.length < 8) throw new Error('New password must be at least 8 characters.');
-      await auth.changePassword(me, $('#pw-current').value, $('#pw-new').value);
+      await db.changePassword($('#pw-current').value, $('#pw-new').value);
       $('#password-dialog').close();
-      toast('Password updated', 'success');
+      toast('Password updated. Other devices have been signed out.', 'success');
+      setTimeout(() => location.reload(), 1200);
     } catch (err) {
       showErr('#pw-change-err', err.message);
     }
@@ -1156,9 +1151,11 @@ function wireSettings() {
 
   $('#btn-delete-account').addEventListener('click', async () => {
     if (await confirmDialog('Delete account?', 'Your profile, settings and conversation list are removed from this browser. This cannot be undone.', 'Delete account')) {
-      db.deleteUser(me.id);
-      db.clearSession();
-      location.reload();
+      try {
+        await db.deleteAccount();
+        db.forgetDevice();
+        location.reload();
+      } catch (err) { toast(err.message, 'error'); }
     }
   });
 
@@ -1171,9 +1168,12 @@ function wireSettings() {
     toast('Settings restored to defaults', 'success');
   });
   $('#btn-wipe').addEventListener('click', async () => {
-    if (await confirmDialog('Erase all demo data?', 'Every account, conversation and setting stored by Relay in this browser will be permanently removed.', 'Erase everything')) {
-      db.wipeAll();
-      location.reload();
+    if (await confirmDialog('Delete your account?', 'Your account, messages and settings are permanently removed from the server. This cannot be undone.', 'Delete everything')) {
+      try {
+        await db.deleteAccount();
+        db.forgetDevice();
+        location.reload();
+      } catch (err) { toast(err.message, 'error'); }
     }
   });
 
@@ -1200,22 +1200,15 @@ async function ensureNotifPermission() {
   return true;
 }
 
-function exportAllData() {
-  const convos = myConvos().map((c) => ({
-    ...c,
-    meta: db.convoMeta(me.id, c.id),
-    messages: db.messagesOf(c.id),
-  }));
-  const payload = {
-    exportedAt: new Date().toISOString(),
-    app: 'Relay',
-    user: { id: me.id, name: me.name, email: me.email },
-    settings: getSettings(),
-    contacts: db.contactUsers(me.id).map((u) => ({ id: u.id, name: u.name, email: u.email })),
-    conversations: convos,
-  };
-  downloadFile(`relay-export-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify(payload, null, 2));
-  toast('Export downloaded', 'success');
+async function exportAllData() {
+  try {
+    const payload = await db.exportData();
+    downloadFile(`relay-export-${new Date().toISOString().slice(0, 10)}.json`,
+      'application/json', JSON.stringify(payload, null, 2));
+    toast('Export downloaded', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 function exportConvoTxt() {
@@ -1295,14 +1288,14 @@ function renderDirectory(q) {
     mark.className = 'sel-mark';
     mark.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>';
     item.append(body, mark);
-    item.addEventListener('click', () => {
+    item.addEventListener('click', async () => {
       if (groupMode) {
         selected.has(person.id) ? selected.delete(person.id) : selected.add(person.id);
         item.setAttribute('aria-pressed', String(selected.has(person.id)));
         updateNewChatState();
       } else {
         $('#new-chat-dialog').close();
-        const convo = db.ensureDm(me.id, person.id);
+        const convo = await db.ensureDm(me.id, person.id);
         renderSidebar();
         openConvo(convo.id);
       }
@@ -1339,14 +1332,18 @@ function wireNewChat() {
     updateNewChatState();
     if (groupMode) $('#group-name').focus();
   });
-  $('#new-chat-start').addEventListener('click', () => {
+  $('#new-chat-start').addEventListener('click', async () => {
     if (!groupMode || selected.size < 2) return;
     const title = $('#group-name').value.trim();
-    const convo = db.createGroup(title, [me.id, ...selected]);
-    $('#new-chat-dialog').close();
-    renderSidebar();
-    openConvo(convo.id);
-    toast(`Group “${title}” created`, 'success');
+    try {
+      const convo = await db.createGroup(title, [...selected]);
+      $('#new-chat-dialog').close();
+      renderSidebar();
+      openConvo(convo.id);
+      toast(`Group “${title}” created`, 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
   });
 }
 
@@ -1383,30 +1380,34 @@ function handleIncoming(convoId, msg) {
 
 function wireStoreEvents() {
   db.on('message', ({ convoId, msg }) => handleIncoming(convoId, msg));
-  db.on('remote:message', ({ convoId, msgId }) => {
-    const msg = db.messagesOf(convoId).find((m) => m.id === msgId);
-    if (msg) handleIncoming(convoId, msg);
-  });
   const rerender = ({ convoId }) => {
     if (convoId === activeConvoId) renderMessages();
     renderSidebar();
   };
   db.on('message-updated', rerender);
-  db.on('remote:message-updated', rerender);
   db.on('reads', rerender);
-  db.on('remote:reads', rerender);
   db.on('typing', ({ convoId, userId, name }) => { if (userId !== me.id) showTyping(convoId, name); });
-  db.on('remote:typing', ({ convoId, userId, name }) => { if (userId !== me.id) showTyping(convoId, name); });
-  const contactsChanged = ({ userId }) => {
-    if (userId !== me.id) return;
+  db.on('contacts', () => {
     renderSidebar();
     if (activeConvoId) renderConvoHeader();
     if ($('#new-chat-dialog').open) renderDirectory($('#new-chat-search').value);
-  };
-  db.on('contacts', contactsChanged);
-  db.on('remote:contacts', contactsChanged);
+  });
   db.on('presence-changed', () => { renderSidebar(); if (activeConvoId) renderConvoHeader(); });
-  db.on('remote:wipe', () => location.reload());
+  db.on('conversations', () => renderSidebar());
+  db.on('users', () => { renderSidebar(); if (activeConvoId) renderConvoHeader(); });
+  db.on('error', ({ message }) => toast(message, 'error'));
+  db.on('resynced', () => {
+    renderSidebar();
+    if (activeConvoId && db.getConvo(activeConvoId)) renderMessages();
+  });
+
+  // A dropped stream means we may have missed events; resync on the way back.
+  let wasDown = false;
+  db.on('connection', ({ status }) => {
+    setConnectionBanner(status);
+    if (status === 'reconnecting') wasDown = true;
+    else if (status === 'online' && wasDown) { wasDown = false; db.resync().catch(() => {}); }
+  });
 
   window.addEventListener('focus', () => {
     if (activeConvoId) {
@@ -1414,6 +1415,13 @@ function wireStoreEvents() {
       renderSidebar();
     }
   });
+}
+
+function setConnectionBanner(status) {
+  const el = $('#connection-banner');
+  if (!el) return;
+  el.hidden = status === 'online';
+  el.textContent = status === 'reconnecting' ? 'Reconnecting…' : '';
 }
 
 /* ================= keyboard shortcuts ================= */
@@ -1480,12 +1488,11 @@ function renderMe() {
   $('#user-menu-header span').textContent = me.email || 'Guest session';
 }
 
-function doSignOut() {
-  db.clearSession();
-  // A guest who actually chatted keeps their profile (retired, so they leave
-  // the directory) — otherwise everyone they spoke to would be left with a
-  // conversation attributed to "Unknown user".
-  if (me.isGuest) db.releaseGuest(me);
+async function doSignOut() {
+  // The server retires a guest who chatted and removes one who did not, so
+  // nobody is left with a conversation attributed to a missing user.
+  try { await db.signOut(); } catch { /* sign out locally regardless */ }
+  if (!$('#remember-me')?.checked) db.forgetDevice();
   signOutCb?.();
 }
 
@@ -1614,8 +1621,9 @@ function wireConvoPane() {
 export function initUI(user, { onSignOut } = {}) {
   me = user;
   signOutCb = onSignOut;
-  loadSettings(me.id);
+  loadSettings(me.id, db.initialSettings());
   applySettings();
+  db.setReceiptsEnabled(getSettings().readReceipts);
 
   $('#auth-screen').hidden = true;
   $('#chat-screen').hidden = false;
@@ -1629,6 +1637,6 @@ export function initUI(user, { onSignOut } = {}) {
   wireNewChat();
   wireStoreEvents();
   wireShortcuts();
-  db.startPresence(me.id);
+  db.connect();
   announce(`Signed in as ${me.name}. ${myConvos().length} conversations.`);
 }

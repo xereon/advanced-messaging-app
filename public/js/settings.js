@@ -1,7 +1,8 @@
 // settings.js — per-user settings: schema, theme registry, persistence and
 // applying everything to the document. UI wiring lives in ui.js.
 
-import { store } from './store.js';
+import { saveSettings as pushSettings } from './store.js';
+import { debounce } from './util.js';
 
 export const DEFAULTS = {
   theme: 'auto',            // 'auto' follows the OS light/dark preference
@@ -49,9 +50,34 @@ const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)
 let current = { ...DEFAULTS };
 let currentUserId = null;
 
-export function loadSettings(userId) {
+const LOCAL_KEY = (id) => `relay:settings:${id}`;
+
+// Settings live on the account so they follow you between devices. A copy is
+// kept in this browser too, purely so the sign-in screen can paint the right
+// theme before the server has answered.
+const push = debounce(() => {
+  pushSettings(current).catch(() => { /* retried on the next change */ });
+}, 400);
+
+function cacheLocally() {
+  try { localStorage.setItem(LOCAL_KEY(currentUserId), JSON.stringify(current)); }
+  catch { /* private mode */ }
+}
+
+export function loadSettings(userId, fromServer) {
   currentUserId = userId;
-  current = { ...DEFAULTS, ...store.read(`settings:${userId}`, {}) };
+  let local = {};
+  try { local = JSON.parse(localStorage.getItem(LOCAL_KEY(userId))) || {}; } catch { /* ignore */ }
+  current = { ...DEFAULTS, ...local, ...(fromServer || {}) };
+  cacheLocally();
+  return current;
+}
+
+/** Paint the last-used theme on the sign-in screen, before any account is known. */
+export function loadCachedSettings(userId) {
+  if (!userId) return current;
+  try { current = { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(LOCAL_KEY(userId))) || {}) }; }
+  catch { /* ignore */ }
   return current;
 }
 
@@ -59,13 +85,13 @@ export function getSettings() { return current; }
 
 export function setSetting(key, value) {
   current[key] = value;
-  if (currentUserId) store.write(`settings:${currentUserId}`, current);
+  if (currentUserId) { cacheLocally(); push(); }
   applySettings();
 }
 
 export function resetSettings() {
   current = { ...DEFAULTS };
-  if (currentUserId) store.write(`settings:${currentUserId}`, current);
+  if (currentUserId) { cacheLocally(); push(); }
   applySettings();
 }
 
