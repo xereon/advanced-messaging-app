@@ -52,6 +52,7 @@
     <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
     <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></symbol>
     <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></symbol>
+    <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
     <symbol id="i-hash" viewBox="0 0 24 24"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></symbol>
   </defs>
 </svg>
@@ -248,7 +249,11 @@
           <button class="btn icon-btn sm" id="composer-context-close" aria-label="Cancel"><svg class="icon sm" aria-hidden="true"><use href="#i-x"/></svg></button>
         </div>
 
+        <div id="attachment-tray" class="attachment-tray" role="list" aria-label="Files to send" hidden></div>
+
         <form id="composer" class="composer">
+          <button type="button" class="btn icon-btn" id="btn-attach" title="Attach files" aria-label="Attach files"><svg class="icon" aria-hidden="true"><use href="#i-paperclip"/></svg></button>
+          <input type="file" id="file-input" multiple hidden accept="image/*,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx">
           <button type="button" class="btn icon-btn" id="btn-emoji" title="Insert emoji" aria-label="Insert emoji" aria-haspopup="true" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-smile"/></svg></button>
           <div class="composer-input-wrap">
             <label for="composer-input" class="visually-hidden">Message</label>
@@ -372,9 +377,10 @@
             <button class="btn" id="btn-set-pin">Set PIN</button>
           </div>
           <div class="security-row">
-            <div><strong>Passkey</strong><p class="hint" id="passkey-status">Not registered</p></div>
-            <button class="btn" id="btn-add-passkey" disabled>Add passkey</button>
+            <div><strong>Passkeys</strong><p class="hint" id="passkey-status">Not registered</p></div>
+            <button class="btn" id="btn-add-passkey">Add passkey</button>
           </div>
+          <ul class="passkey-list" id="passkey-list" hidden></ul>
           <div class="security-row">
             <div><strong>Password</strong><p class="hint">Used for standard sign-in</p></div>
             <button class="btn" id="btn-change-password">Change…</button>
@@ -424,6 +430,9 @@
             <tr><th scope="row">New line</th><td><kbd>Shift</kbd> + <kbd>Enter</kbd></td></tr>
             <tr><th scope="row">Settings</th><td><kbd>Ctrl</kbd> + <kbd>,</kbd></td></tr>
             <tr><th scope="row">This help</th><td><kbd>?</kbd> (outside a text field)</td></tr>
+            <tr><th scope="row">Move through messages</th><td><kbd>↑</kbd> / <kbd>↓</kbd> in the message list</td></tr>
+            <tr><th scope="row">Message actions</th><td><kbd>Enter</kbd> on a message</td></tr>
+            <tr><th scope="row">Reply / edit / copy a message</th><td><kbd>R</kbd> / <kbd>E</kbd> / <kbd>C</kbd></td></tr>
             <tr><th scope="row">Close / cancel</th><td><kbd>Esc</kbd></td></tr>
           </tbody>
         </table>

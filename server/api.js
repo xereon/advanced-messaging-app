@@ -5,6 +5,7 @@ import { handle, tx, nextSeq, currentSeq, publicUser, shapeMessage, shapeConvo }
 import * as auth from './auth.js';
 import * as rt from './realtime.js';
 import { scheduleBotReply } from './bots.js';
+import * as files from './files.js';
 
 const MAX_TEXT = 4000;
 const HISTORY_LIMIT = 200;
@@ -44,12 +45,32 @@ function reactionsFor(msgIds) {
   return out;
 }
 
-function loadMessages(convoId, limit = HISTORY_LIMIT) {
-  const rows = handle().prepare(
-    'SELECT * FROM messages WHERE convo_id = ? ORDER BY at DESC, seq DESC LIMIT ?',
-  ).all(convoId, limit).reverse();
-  const reactions = reactionsFor(rows.map((r) => r.id));
-  return rows.map((r) => shapeMessage(r, reactions[r.id] || {}));
+function loadMessages(convoId, { limit = HISTORY_LIMIT, beforeSeq = null } = {}) {
+  const rows = beforeSeq
+    ? handle().prepare(
+      'SELECT * FROM messages WHERE convo_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?',
+    ).all(convoId, beforeSeq, limit).reverse()
+    : handle().prepare(
+      'SELECT * FROM messages WHERE convo_id = ? ORDER BY seq DESC LIMIT ?',
+    ).all(convoId, limit).reverse();
+
+  const ids = rows.map((r) => r.id);
+  const reactions = reactionsFor(ids);
+  const attachments = files.forMessages(ids);
+  return rows.map((r) => ({
+    ...shapeMessage(r, reactions[r.id] || {}),
+    attachments: attachments[r.id] || [],
+  }));
+}
+
+/** Older messages for the "load earlier" control. */
+export function history(me, convoId, { beforeSeq, limit }) {
+  assertMember(convoId, me.id);
+  const capped = Math.min(Math.max(Number(limit) || 50, 1), HISTORY_LIMIT);
+  const messages = loadMessages(convoId, { limit: capped, beforeSeq: Number(beforeSeq) || null });
+  const oldest = handle().prepare('SELECT MIN(seq) AS s FROM messages WHERE convo_id = ?').get(convoId)?.s ?? null;
+  const hasMore = messages.length > 0 && oldest !== null && messages[0].seq > oldest;
+  return { messages, hasMore };
 }
 
 function convoWithMembers(row) {
@@ -86,12 +107,15 @@ export function bootstrap(me) {
 
   const conversations = [];
   const messages = {};
+  const hasMore = {};
   const reads = {};
   const meta = {};
 
   for (const row of convoRows) {
     conversations.push(convoWithMembers(row));
     messages[row.id] = loadMessages(row.id);
+    const oldest = db.prepare('SELECT MIN(seq) AS s FROM messages WHERE convo_id = ?').get(row.id)?.s ?? null;
+    hasMore[row.id] = messages[row.id].length > 0 && oldest !== null && messages[row.id][0].seq > oldest;
     reads[row.id] = Object.fromEntries(
       db.prepare('SELECT user_id, at FROM reads WHERE convo_id = ? AND (private = 0 OR user_id = ?)')
         .all(row.id, me.id).map((r) => [r.user_id, r.at]),
@@ -120,6 +144,7 @@ export function bootstrap(me) {
     users: peopleRows.map(publicUser),
     conversations,
     messages,
+    hasMore,
     reads,
     meta,
     contacts: db.prepare('SELECT contact_id FROM contacts WHERE user_id = ?').all(me.id).map((r) => r.contact_id),
@@ -182,10 +207,11 @@ export function createConversation(me, { type, title, members }) {
 
 /* ---------- messages ---------- */
 
-export function sendMessage(me, convoId, { text, replyTo, clientId }) {
+export function sendMessage(me, convoId, { text, replyTo, clientId, attachmentIds = [] }) {
   assertMember(convoId, me.id);
   const clean = String(text ?? '').trim();
-  if (!clean) bad('Message is empty.');
+  const wanted = Array.isArray(attachmentIds) ? attachmentIds.filter((x) => typeof x === 'string') : [];
+  if (!clean && !wanted.length) bad('Message is empty.');
   if (clean.length > MAX_TEXT) bad(`Messages are limited to ${MAX_TEXT} characters.`);
   if (replyTo) {
     const orig = handle().prepare('SELECT convo_id FROM messages WHERE id = ?').get(replyTo);
@@ -207,7 +233,8 @@ export function sendMessage(me, convoId, { text, replyTo, clientId }) {
     return handle().prepare('SELECT * FROM messages WHERE id = ?').get(id);
   });
 
-  const msg = shapeMessage(row);
+  const attachments = wanted.length ? files.attach(wanted, id, convoId, me.id) : [];
+  const msg = { ...shapeMessage(row), attachments };
   rt.publish(rt.convoAudience(convoId), 'message', { message: msg, clientId });
   scheduleBotReply(convoId, msg);
   return msg;
@@ -220,18 +247,26 @@ export function editMessage(me, msgId, text) {
   if (!clean) bad('Message is empty.');
   if (clean.length > MAX_TEXT) bad(`Messages are limited to ${MAX_TEXT} characters.`);
   handle().prepare('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?').run(clean, Date.now(), msgId);
-  const msg = shapeMessage(handle().prepare('SELECT * FROM messages WHERE id = ?').get(msgId));
+  const msg = {
+    ...shapeMessage(handle().prepare('SELECT * FROM messages WHERE id = ?').get(msgId)),
+    attachments: files.forMessages([msgId])[msgId] || [],
+  };
   rt.publish(rt.convoAudience(row.convo_id), 'message-updated', { message: msg });
   return msg;
 }
 
-export function deleteMessage(me, msgId) {
+export async function deleteMessage(me, msgId) {
   const row = ownMessage(msgId, me.id);
   handle().prepare('UPDATE messages SET deleted_at = ?, text = ? WHERE id = ?').run(Date.now(), '', msgId);
-  const msg = shapeMessage(handle().prepare('SELECT * FROM messages WHERE id = ?').get(msgId));
+  // Deleting a message deletes its files too, not just the reference to them.
+  await files.removeForMessage(msgId);
+  const msg = { ...shapeMessage(handle().prepare('SELECT * FROM messages WHERE id = ?').get(msgId)), attachments: [] };
   rt.publish(rt.convoAudience(row.convo_id), 'message-updated', { message: msg });
   return msg;
 }
+
+/** Membership check used by the upload and download routes. */
+export function assertConvoMember(convoId, userId) { assertMember(convoId, userId); }
 
 export function toggleReaction(me, msgId, emoji) {
   const db = handle();
@@ -248,7 +283,10 @@ export function toggleReaction(me, msgId, emoji) {
   } else {
     db.prepare('INSERT INTO reactions (msg_id, user_id, emoji) VALUES (?,?,?)').run(msgId, me.id, clean);
   }
-  const msg = shapeMessage(row, reactionsFor([msgId])[msgId] || {});
+  const msg = {
+    ...shapeMessage(row, reactionsFor([msgId])[msgId] || {}),
+    attachments: files.forMessages([msgId])[msgId] || [],
+  };
   rt.publish(rt.convoAudience(row.convo_id), 'message-updated', { message: msg });
   return msg;
 }

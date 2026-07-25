@@ -477,6 +477,9 @@ function openConvo(convoId) {
   if (!convo) return;
   cancelComposeContext();
   closeConvoSearch();
+  pendingAttachments = [];
+  renderAttachmentTray();
+  activeMsgId = null;
   activeConvoId = convoId;
   lastReadBeforeOpen = db.readsOf(convoId)[me.id] || 0;
   $('#empty-state').hidden = true;
@@ -501,6 +504,68 @@ function closeConvoToList() {
   $('#convo').hidden = true;
   $('#empty-state').hidden = false;
   renderSidebar();
+}
+
+/** Replace a single message node in place, rather than rebuilding the list. */
+function patchMessageNode(msg) {
+  const wrap = $('#messages');
+  const existing = wrap.querySelector(`[data-msg-id="${CSS.escape(msg.id)}"]`);
+  if (!existing) return false;
+  const convo = db.getConvo(activeConvoId);
+  if (!convo) return false;
+  const list = visibleMessages(convo);
+  const i = list.findIndex((m) => m.id === msg.id);
+  if (i === -1) return false;
+  const prev = list[i - 1];
+  const next = list[i + 1];
+  const groupStart = !prev || prev.from !== msg.from || msg.at - prev.at > 300000
+    || dayKey(prev.at) !== dayKey(msg.at);
+  const groupEnd = !next || next.from !== msg.from || next.at - msg.at > 300000;
+  const wasActive = existing.tabIndex === 0;
+  const fresh = messageEl(convo, msg, { groupStart, groupEnd, highlight: convoSearch?.q?.toLowerCase() || '' });
+  existing.replaceWith(fresh);
+  if (wasActive) fresh.tabIndex = 0;
+  return true;
+}
+
+/** Append one newly arrived message without touching the rest of the list. */
+function appendMessageNode(msg) {
+  const wrap = $('#messages');
+  const convo = db.getConvo(activeConvoId);
+  if (!convo || wrap.querySelector(`[data-msg-id="${CSS.escape(msg.id)}"]`)) return false;
+  const list = visibleMessages(convo);
+  if (list[list.length - 1]?.id !== msg.id) return false;   // out of order: full render
+  if (!wrap.querySelector('.msg')) return false;            // empty state present
+
+  const prev = list[list.length - 2];
+  if (prev && dayKey(prev.at) !== dayKey(msg.at)) return false;  // needs a day divider
+  const groupStart = !prev || prev.from !== msg.from || msg.at - prev.at > 300000;
+  if (prev) {
+    const prevEl = wrap.querySelector(`[data-msg-id="${CSS.escape(prev.id)}"]`);
+    // The previous message may stop being the group end; re-render it.
+    if (prevEl && !groupStart) patchMessageNode(prev);
+  }
+  wrap.append(messageEl(convo, msg, { groupStart, groupEnd: true, highlight: convoSearch?.q?.toLowerCase() || '' }));
+  refreshRovingTabstop();
+  return true;
+}
+
+async function loadOlderMessages(btn) {
+  const wrap = $('#messages');
+  const convoId = activeConvoId;
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  try {
+    const added = await db.loadOlder(convoId);
+    if (convoId !== activeConvoId) return;
+    // renderMessages keeps the reading position steady as content grows above.
+    renderMessages();
+    announce(added ? `${added} earlier messages loaded.` : 'No earlier messages.');
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Load earlier messages';
+    toast(err.message, 'error');
+  }
 }
 
 function renderConvoHeader() {
@@ -549,8 +614,24 @@ function renderMessages() {
   if (!convo) return;
   const s = getSettings();
   const wrap = $('#messages');
+  wrap.setAttribute('role', 'list');
   const stickToBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 160;
+  // Clearing the list resets scrollTop, so remember where the reader was and
+  // how much content sat above them. Growing the list above the viewport must
+  // not yank them to the top.
+  const prevScrollTop = wrap.scrollTop;
+  const prevHeight = wrap.scrollHeight;
   wrap.innerHTML = '';
+
+  // "Load earlier" sits above the first message.
+  if (db.hasOlder(convo.id)) {
+    const older = document.createElement('button');
+    older.type = 'button';
+    older.className = 'load-older';
+    older.textContent = 'Load earlier messages';
+    older.addEventListener('click', () => loadOlderMessages(older));
+    wrap.append(older);
+  }
 
   const msgs = visibleMessages(convo);
   const q = convoSearch?.q?.toLowerCase() || '';
@@ -594,8 +675,14 @@ function renderMessages() {
       target.classList.add('flash');
     }
   } else if (stickToBottom) {
-    wrap.scrollTop = wrap.scrollHeight;
+    // The list has CSS smooth scrolling for the jump-to-latest button;
+    // restoring position after a re-render must be immediate, or the queued
+    // animation simply discards it.
+    wrap.scrollTo({ top: wrap.scrollHeight, behavior: 'instant' });
+  } else {
+    wrap.scrollTo({ top: prevScrollTop + (wrap.scrollHeight - prevHeight), behavior: 'instant' });
   }
+  refreshRovingTabstop();
   updateJumpButton();
 }
 
@@ -606,6 +693,10 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
   const el = document.createElement('div');
   el.className = `msg ${mine ? 'out' : 'in'}${groupStart ? ' group-start' : ''}${groupEnd ? ' group-end' : ''}${m.deletedAt ? ' deleted' : ''}${m.pending ? ' pending' : ''}${m.failed ? ' failed' : ''}`;
   el.dataset.msgId = m.id;
+  // Roving tabindex: only the active message is tabbable, so the whole list is
+  // a single tab stop and arrow keys move between messages.
+  el.tabIndex = -1;
+  el.setAttribute('role', 'listitem');
 
   if (!mine) {
     if (groupEnd) el.append(avatarEl(author, 'avatar'));
@@ -650,6 +741,9 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
     }
     textEl.innerHTML = html;
   }
+  if (!m.deletedAt && m.attachments?.length) {
+    bubble.append(attachmentsEl(m));
+  }
   bubble.append(textEl);
 
   const tail = document.createElement('span');
@@ -674,6 +768,7 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'reaction-chip' + (users.includes(me.id) ? ' mine' : '');
+      chip.tabIndex = -1;
       const names = users.map((u) => db.getUser(u)?.name || 'someone').join(', ');
       chip.setAttribute('aria-label', `${emoji} ${users.length}, reacted by ${names}. Toggle your reaction.`);
       chip.setAttribute('aria-pressed', String(users.includes(me.id)));
@@ -696,6 +791,7 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'btn icon-btn sm';
+      b.tabIndex = -1;
       b.setAttribute('aria-label', label);
       b.title = label;
       b.innerHTML = `<svg class="icon sm" aria-hidden="true"><use href="#i-${icon}"/></svg>`;
@@ -723,6 +819,144 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
     el.append(actions);
   }
   return el;
+}
+
+/* ---------- message list keyboard navigation ---------- */
+
+/** The message that currently owns the list's single tab stop. */
+let activeMsgId = null;
+
+function messageEls() { return $$('#messages .msg'); }
+
+function setActiveMessage(el, { focus = true } = {}) {
+  if (!el) return;
+  for (const other of messageEls()) other.tabIndex = -1;
+  el.tabIndex = 0;
+  activeMsgId = el.dataset.msgId;
+  if (focus) el.focus();
+}
+
+/** Keep exactly one message tabbable after any re-render. */
+function refreshRovingTabstop() {
+  const els = messageEls();
+  if (!els.length) return;
+  const current = els.find((el) => el.dataset.msgId === activeMsgId);
+  const target = current || els[els.length - 1];
+  for (const el of els) el.tabIndex = el === target ? 0 : -1;
+  activeMsgId = target.dataset.msgId;
+}
+
+function wireMessageKeys() {
+  const list = $('#messages');
+
+  list.addEventListener('focusin', (e) => {
+    const msg = e.target.closest('.msg');
+    if (msg && e.target === msg) setActiveMessage(msg, { focus: false });
+  });
+
+  list.addEventListener('keydown', (e) => {
+    const msg = e.target.closest('.msg');
+    if (!msg) return;
+    const els = messageEls();
+    const i = els.indexOf(msg);
+
+    // Arrow keys move between messages; Tab still leaves the list entirely.
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveMessage(els[e.key === 'ArrowDown' ? Math.min(i + 1, els.length - 1) : Math.max(i - 1, 0)]);
+      return;
+    }
+    if (e.key === 'Home') { e.preventDefault(); setActiveMessage(els[0]); return; }
+    if (e.key === 'End') { e.preventDefault(); setActiveMessage(els[els.length - 1]); return; }
+
+    if (e.target !== msg) return;   // already inside the action toolbar
+
+    // Enter or Right steps into this message's actions.
+    if (e.key === 'Enter' || e.key === 'ArrowRight') {
+      const first = msg.querySelector('.msg-actions button');
+      if (first) { e.preventDefault(); first.focus(); }
+      return;
+    }
+    const id = msg.dataset.msgId;
+    const m = db.messagesOf(activeConvoId).find((x) => x.id === id);
+    if (!m || m.deletedAt) return;
+    if (e.key.toLowerCase() === 'r') { e.preventDefault(); startReply(m); }
+    if (e.key.toLowerCase() === 'e' && m.from === me.id) { e.preventDefault(); startEdit(m); }
+    if (e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      navigator.clipboard?.writeText(m.text).then(
+        () => toast('Copied to clipboard', 'success'),
+        () => toast('Could not copy — clipboard is unavailable.', 'error'),
+      );
+    }
+  });
+
+  // Escape from the toolbar returns focus to its message.
+  list.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const inToolbar = e.target.closest('.msg-actions');
+    if (!inToolbar) return;
+    e.stopPropagation();
+    setActiveMessage(inToolbar.closest('.msg'));
+  });
+}
+
+const formatBytes = (n) => (
+  n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
+);
+
+function attachmentsEl(msg) {
+  const wrap = document.createElement('div');
+  wrap.className = 'attachments';
+  for (const a of msg.attachments) {
+    if (a.isImage) {
+      const link = document.createElement('a');
+      link.className = 'attachment-image';
+      link.href = a.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.tabIndex = -1;
+      const img = document.createElement('img');
+      img.src = a.url;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      // The filename is the only description we have; better than nothing for
+      // a screen reader, and the size keeps the layout from jumping.
+      img.alt = a.name;
+      if (a.width && a.height) { img.width = a.width; img.height = a.height; }
+      link.append(img);
+      link.setAttribute('aria-label', `Image, ${a.name}. Opens full size.`);
+      wrap.append(link);
+    } else {
+      const link = document.createElement('a');
+      link.className = 'attachment-file';
+      link.href = `${a.url}?download=1`;
+      link.tabIndex = -1;
+      link.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-paperclip"/></svg><span class="attachment-name"></span><span class="attachment-size"></span>';
+      link.querySelector('.attachment-name').textContent = a.name;
+      link.querySelector('.attachment-size').textContent = formatBytes(a.size);
+      link.setAttribute('aria-label', `Download ${a.name}, ${formatBytes(a.size)}`);
+      wrap.append(link);
+    }
+  }
+  return wrap;
+}
+
+/** Update just the delivery-status icons on your own messages. */
+function refreshOwnStatuses() {
+  const convo = db.getConvo(activeConvoId);
+  if (!convo) return;
+  for (const m of visibleMessages(convo)) {
+    if (m.from !== me.id || m.deletedAt) continue;
+    const el = $(`#messages [data-msg-id="${CSS.escape(m.id)}"] .status-icon`);
+    if (!el) continue;
+    const meta = STATUS_META[statusOf(m, convo)];
+    el.setAttribute('aria-label', meta.label);
+    el.classList.toggle('read', statusOf(m, convo) === 'read');
+    const title = el.querySelector('title');
+    if (title) title.textContent = meta.label;
+    el.querySelector('use')?.setAttribute('href', `#${meta.icon}`);
+  }
 }
 
 /* ---------- react palette ---------- */
@@ -798,7 +1032,7 @@ function autosize(ta) {
 function updateSendState() {
   const input = $('#composer-input');
   const len = input.value.length;
-  $('#btn-send').disabled = !input.value.trim();
+  $('#btn-send').disabled = !input.value.trim() && pendingAttachments.length === 0;
   const counter = $('#char-count');
   if (len > 3500) {
     counter.hidden = false;
@@ -848,6 +1082,49 @@ function startEdit(m) {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 
+let pendingAttachments = [];
+
+function renderAttachmentTray() {
+  const tray = $('#attachment-tray');
+  tray.innerHTML = '';
+  tray.hidden = pendingAttachments.length === 0;
+  for (const a of pendingAttachments) {
+    const chip = document.createElement('div');
+    chip.className = 'attachment-chip';
+    chip.innerHTML = '<span class="attachment-chip-name"></span>';
+    chip.querySelector('.attachment-chip-name').textContent = `${a.name} (${formatBytes(a.size)})`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn icon-btn sm';
+    remove.setAttribute('aria-label', `Remove ${a.name}`);
+    remove.innerHTML = '<svg class="icon sm" aria-hidden="true"><use href="#i-x"/></svg>';
+    remove.addEventListener('click', () => {
+      pendingAttachments = pendingAttachments.filter((x) => x.id !== a.id);
+      renderAttachmentTray();
+      updateSendState();
+    });
+    chip.append(remove);
+    tray.append(chip);
+  }
+}
+
+async function addFiles(fileList) {
+  if (!activeConvoId) return;
+  const room = 4 - pendingAttachments.length;
+  const files = [...fileList].slice(0, Math.max(room, 0));
+  if (!files.length) { toast('Up to 4 files per message.', 'error'); return; }
+  for (const file of files) {
+    try {
+      const uploaded = await db.uploadAttachment(activeConvoId, file);
+      pendingAttachments.push(uploaded);
+      renderAttachmentTray();
+      updateSendState();
+    } catch (err) {
+      toast(`${file.name}: ${err.message}`, 'error');
+    }
+  }
+}
+
 function cancelComposeContext() {
   const wasEditing = !!editing;
   replyTo = null;
@@ -864,7 +1141,8 @@ function cancelComposeContext() {
 function sendCurrent() {
   const input = $('#composer-input');
   const text = input.value.trim();
-  if (!text || !activeConvoId) return;
+  if ((!text && !pendingAttachments.length) || !activeConvoId) return;
+  if (!text && editing) return;
   const convo = db.getConvo(activeConvoId);
 
   if (editing) {
@@ -872,7 +1150,11 @@ function sendCurrent() {
     editing = null;
     $('#composer-context').hidden = true;
   } else {
-    db.appendMessage(convo.id, { text, replyTo: replyTo?.id }).catch(() => { /* surfaced as a toast */ });
+    db.appendMessage(convo.id, {
+      text, replyTo: replyTo?.id, attachments: pendingAttachments,
+    }).catch(() => { /* surfaced as a toast */ });
+    pendingAttachments = [];
+    renderAttachmentTray();
     db.markRead(convo.id, me.id);
     replyTo = null;
     $('#composer-context').hidden = true;
@@ -881,7 +1163,8 @@ function sendCurrent() {
   autosize(input);
   updateSendState();
   db.setConvoMeta(me.id, activeConvoId, { draft: '' });
-  renderMessages();
+  // The store event appends the new node; re-rendering here would throw away
+  // every existing one for nothing.
   renderSidebar();
   input.focus();
 }
@@ -1035,14 +1318,52 @@ function syncSettingsInputs() {
   $('#set-display-name').value = me.name;
   $('#pin-status').textContent = me.hasPin ? 'Enabled for this account' : 'Not set';
   $('#btn-set-pin').textContent = me.hasPin ? 'Change PIN' : 'Set PIN';
-  // Passkeys need server-side WebAuthn verification to mean anything. Rather
-  // than offer a control that looks like security and is not, it stays off
-  // until that lands.
-  $('#passkey-status').textContent = 'Not yet available — needs server-side WebAuthn verification.';
-  $('#btn-add-passkey').disabled = true;
+  renderPasskeys();
   const pwRow = $('#btn-change-password').closest('.security-row');
   pwRow.hidden = !!me.isGuest;
   refreshStorageUsage();
+}
+
+async function renderPasskeys() {
+  const status = $('#passkey-status');
+  const btn = $('#btn-add-passkey');
+  const list = $('#passkey-list');
+  if (!db.passkeysSupported()) {
+    status.textContent = 'Unavailable — passkeys need HTTPS or localhost.';
+    btn.disabled = true;
+    list.hidden = true;
+    return;
+  }
+  btn.disabled = false;
+  try {
+    const { credentials } = await db.listPasskeys();
+    status.textContent = credentials.length
+      ? `${credentials.length} registered`
+      : 'None registered yet';
+    list.hidden = credentials.length === 0;
+    list.innerHTML = '';
+    for (const c of credentials) {
+      const row = document.createElement('li');
+      row.className = 'passkey-row';
+      const label = document.createElement('span');
+      const used = c.lastUsedAt ? `last used ${fmtDay(c.lastUsedAt)}` : 'never used';
+      label.textContent = `${c.label || 'Passkey'} — added ${fmtDay(c.createdAt)}, ${used}`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn sm';
+      remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', `Remove ${c.label || 'passkey'}`);
+      remove.addEventListener('click', async () => {
+        if (!await confirmDialog('Remove passkey?', 'You will no longer be able to sign in with it.', 'Remove')) return;
+        try { await db.deletePasskey(c.id); renderPasskeys(); toast('Passkey removed', 'success'); }
+        catch (err) { toast(err.message, 'error'); }
+      });
+      row.append(label, remove);
+      list.append(row);
+    }
+  } catch {
+    status.textContent = 'Could not load your passkeys.';
+  }
 }
 
 function refreshStorageUsage() {
@@ -1144,6 +1465,23 @@ function wireSettings() {
       setTimeout(() => location.reload(), 1200);
     } catch (err) {
       showErr('#pw-change-err', err.message);
+    }
+  });
+
+  $('#btn-add-passkey').addEventListener('click', async () => {
+    const btn = $('#btn-add-passkey');
+    btn.disabled = true;
+    try {
+      const label = `${navigator.platform || 'This device'}`.slice(0, 40);
+      await db.registerPasskey(label);
+      await renderPasskeys();
+      toast('Passkey registered — try it on your next sign-in.', 'success');
+    } catch (err) {
+      if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
+        toast(err.message || 'Passkey registration failed.', 'error');
+      }
+    } finally {
+      btn.disabled = false;
     }
   });
 
@@ -1352,6 +1690,9 @@ function wireNewChat() {
 function handleIncoming(convoId, msg) {
   const convo = db.getConvo(convoId);
   if (!convo || !convo.members.includes(me.id)) return;
+  const wrap = $('#messages');
+  const stickToBottomBefore = convoId === activeConvoId
+    && wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 160;
   typingByConvo.delete(convoId);
   renderTyping();
 
@@ -1372,7 +1713,8 @@ function handleIncoming(convoId, msg) {
     if (!msg.deliveredAt && !author?.isBot) db.patchMessage(convoId, msg.id, { deliveredAt: Date.now() });
   }
   if (convoId === activeConvoId) {
-    renderMessages();
+    if (!appendMessageNode(msg)) renderMessages();
+    else if (stickToBottomBefore) $('#messages').scrollTop = $('#messages').scrollHeight;
     updateJumpButton(msg.from !== me.id);
   }
   renderSidebar();
@@ -1380,12 +1722,18 @@ function handleIncoming(convoId, msg) {
 
 function wireStoreEvents() {
   db.on('message', ({ convoId, msg }) => handleIncoming(convoId, msg));
-  const rerender = ({ convoId }) => {
-    if (convoId === activeConvoId) renderMessages();
+  db.on('message-updated', ({ convoId, msg }) => {
+    // One node changed; only fall back to a full render if it is not on screen
+    // in a shape we can patch.
+    if (convoId === activeConvoId && !patchMessageNode(msg)) renderMessages();
     renderSidebar();
-  };
-  db.on('message-updated', rerender);
-  db.on('reads', rerender);
+  });
+  db.on('reads', ({ convoId }) => {
+    // Receipts change only the status icons on your own messages.
+    if (convoId === activeConvoId) refreshOwnStatuses();
+    renderSidebar();
+  });
+  db.on('history', ({ convoId }) => { if (convoId === activeConvoId) renderSidebar(); });
   db.on('typing', ({ convoId, userId, name }) => { if (userId !== me.id) showTyping(convoId, name); });
   db.on('contacts', () => {
     renderSidebar();
@@ -1598,6 +1946,39 @@ function wireConvoPane() {
   });
   $('#composer-context-close').addEventListener('click', cancelComposeContext);
 
+  // Attachments: button, paste and drag-and-drop all land in the same place.
+  const fileInput = $('#file-input');
+  $('#btn-attach').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value = ''; });
+
+  input.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) { e.preventDefault(); addFiles(files); }
+  });
+
+  const dropZone = $('#convo');
+  let dragDepth = 0;
+  dropZone.addEventListener('dragenter', (e) => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    dragDepth += 1;
+    dropZone.classList.add('drop-target');
+  });
+  dropZone.addEventListener('dragover', (e) => {
+    if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+  });
+  dropZone.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) dropZone.classList.remove('drop-target');
+  });
+  dropZone.addEventListener('drop', (e) => {
+    if (!e.dataTransfer?.files.length) return;
+    e.preventDefault();
+    dragDepth = 0;
+    dropZone.classList.remove('drop-target');
+    addFiles(e.dataTransfer.files);
+  });
+
   // Emoji picker
   const emojiMenu = $('#emoji-menu');
   emojiMenu.innerHTML = EMOJI_SET.map((e) => `<button type="button" aria-label="Insert ${e}">${e}</button>`).join('');
@@ -1637,6 +2018,7 @@ export function initUI(user, { onSignOut } = {}) {
   wireNewChat();
   wireStoreEvents();
   wireShortcuts();
+  wireMessageKeys();
   db.connect();
   announce(`Signed in as ${me.name}. ${myConvos().length} conversations.`);
 }

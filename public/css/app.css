@@ -1317,3 +1317,104 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
 /* Optimistic and failed messages */
 .msg.pending .bubble { opacity: 0.7; }
 .msg.failed .bubble { outline: 2px dashed var(--danger); }
+
+/* ---------- Attachments ---------- */
+.attachments { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.35rem; }
+.attachment-image {
+  display: block;
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  max-width: min(20rem, 100%);
+  line-height: 0;
+}
+.attachment-image img { width: 100%; height: auto; background: var(--sunken); }
+.attachment-file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.8438rem;
+  max-width: 20rem;
+}
+.attachment-file:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
+.attachment-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.attachment-size { opacity: 0.75; flex: none; }
+
+.attachment-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 1.25rem 0.25rem;
+}
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.3rem 0.15rem 0.7rem;
+  font-size: 0.8125rem;
+  max-width: 16rem;
+}
+.attachment-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.convo.drop-target { outline: 3px dashed var(--accent); outline-offset: -6px; }
+.convo.drop-target::after {
+  content: "Drop files to attach";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 8rem;
+  text-align: center;
+  font-weight: 700;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+/* ---------- Load earlier ---------- */
+.load-older {
+  align-self: center;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  flex: none;
+}
+.load-older:hover:not(:disabled) { background: var(--sunken); }
+.load-older:disabled { opacity: 0.6; cursor: default; }
+
+/* ---------- Message list focus (roving tabindex) ---------- */
+.msg:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-m);
+}
+[data-strong-focus="true"] .msg:focus-visible { outline-width: 3px; box-shadow: 0 0 0 6px var(--focus-halo); }
+.msg:focus-within .msg-actions { display: inline-flex; }
+
+/* ---------- Passkeys ---------- */
+.passkey-list { list-style: none; padding: 0; margin: 0 0 0.5rem; max-width: 30rem; }
+.passkey-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  font-size: 0.8438rem;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.passkey-row:last-child { border-bottom: 0; }
+.btn.sm { min-height: 1.9rem; padding: 0.2rem 0.6rem; font-size: 0.8125rem; }
+
+@media (max-width: 700px) {
+  .attachment-tray { margin-inline: 0.75rem; }
+}

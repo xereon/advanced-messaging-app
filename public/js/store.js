@@ -25,6 +25,7 @@ const reads = new Map();      // convoId -> { userId: ts }
 const metas = new Map();      // convoId -> { pinned, muted, draft, clearedBefore }
 const contacts = new Set();
 const online = new Set();
+const hasMore = new Map();    // convoId -> older messages exist on the server
 let serverSettings = null;
 let stream = null;
 
@@ -34,10 +35,11 @@ export function initialSettings() { return serverSettings; }
 export function hydrate(boot) {
   me = boot.me;
   users.clear(); convos.clear(); messages.clear(); reads.clear(); metas.clear();
-  contacts.clear(); online.clear();
+  contacts.clear(); online.clear(); hasMore.clear();
   for (const u of boot.users) users.set(u.id, u);
   for (const c of boot.conversations) convos.set(c.id, c);
   for (const [id, list] of Object.entries(boot.messages)) messages.set(id, list);
+  for (const [id, more] of Object.entries(boot.hasMore || {})) hasMore.set(id, more);
   for (const [id, map] of Object.entries(boot.reads)) reads.set(id, map);
   for (const [id, m] of Object.entries(boot.meta)) metas.set(id, m);
   for (const id of boot.contacts) contacts.add(id);
@@ -105,6 +107,22 @@ export function setConvoMeta(_userId, convoId, patch) {
 
 export function messagesOf(convoId) { return messages.get(convoId) || []; }
 
+export function hasOlder(convoId) { return !!hasMore.get(convoId); }
+
+/** Prepend a page of older messages. Returns how many arrived. */
+export async function loadOlder(convoId) {
+  const list = messages.get(convoId) || [];
+  const oldest = list.find((m) => typeof m.seq === 'number');
+  if (!oldest) return 0;
+  const { messages: page, hasMore: more } = await api.olderMessages(convoId, oldest.seq);
+  const known = new Set(list.map((m) => m.id));
+  const fresh = page.filter((m) => !known.has(m.id));
+  messages.set(convoId, [...fresh, ...list]);
+  hasMore.set(convoId, more);
+  emit('history', { convoId, added: fresh.length });
+  return fresh.length;
+}
+
 function upsertMessage(msg, clientId) {
   const list = messages.get(msg.convoId) || [];
   // Reconcile an optimistic row first, then fall back to matching by id.
@@ -126,6 +144,7 @@ export async function appendMessage(convoId, draft) {
   const optimistic = {
     id: clientId, convoId, from: me.id, text: draft.text,
     at: Date.now(), replyTo: draft.replyTo, reactions: {}, pending: true,
+    attachments: draft.attachments || [],
   };
   const list = messages.get(convoId) || [];
   list.push(optimistic);
@@ -135,6 +154,7 @@ export async function appendMessage(convoId, draft) {
   try {
     const { message } = await api.sendMessage(convoId, {
       text: draft.text, replyTo: draft.replyTo, clientId,
+      attachmentIds: (draft.attachments || []).map((a) => a.id),
     });
     upsertMessage(message, clientId);
     emit('message-updated', { convoId, msg: message });
@@ -246,6 +266,11 @@ export async function deleteAccount() {
 }
 
 export const saveSettings = (settings) => api.saveSettings(settings);
+export const passkeysSupported = api.passkeysSupported;
+export const registerPasskey = (label) => api.registerPasskey(label);
+export const listPasskeys = () => api.listPasskeys();
+export const deletePasskey = (id) => api.deletePasskey(id);
+export const uploadAttachment = (convoId, file, opts) => api.uploadAttachment(convoId, file, opts);
 export const setPin = (pin) => api.setPin(pin);
 export const changePassword = (current, next) => api.changePassword(current, next);
 export const exportData = () => api.exportData();

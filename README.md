@@ -20,7 +20,7 @@ Then open <http://localhost:8130>. The database is created automatically at
 `data/relay.db`.
 
 ```bash
-npm test    # 45 tests covering auth, authorization and messaging
+npm test    # 80 tests: auth, WebAuthn, authorization, messaging, files
 npm run dev # restarts on change
 ```
 
@@ -30,8 +30,27 @@ npm run dev # restarts on change
 | --- | --- | --- |
 | `PORT` | `8130` | HTTP port |
 | `RELAY_DB` | `data/relay.db` | SQLite database path |
+| `RELAY_UPLOADS` | `data/uploads` | Where attachments are stored |
 | `RELAY_SECURE` | unset | Set to `1` behind HTTPS to add `Secure` to the session cookie |
+| `RELAY_ORIGIN` | unset | Extra allowed WebAuthn origin, if the public origin differs from `Host` |
 | `RELAY_RATE_LIMIT` | on | Set to `off` to disable rate limiting (tests only) |
+
+### Email delivery
+
+Login codes are emailed when SMTP is configured, and shown on screen otherwise.
+
+| Variable | Purpose |
+| --- | --- |
+| `RELAY_SMTP_HOST` | Enables real delivery when set |
+| `RELAY_SMTP_PORT` | Default `587` |
+| `RELAY_SMTP_USER` / `RELAY_SMTP_PASS` | Credentials, if the server requires auth |
+| `RELAY_SMTP_FROM` | e.g. `Relay <no-reply@example.com>` |
+| `RELAY_SMTP_SECURE` | `1` for implicit TLS (port 465) |
+| `RELAY_SMTP_INSECURE` | `1` to allow auth without STARTTLS (not recommended) |
+
+The client refuses to send credentials to a server that will not negotiate
+STARTTLS unless you explicitly opt in. Once SMTP is configured the code is never
+returned in the HTTP response — only a masked address confirming where it went.
 
 **Deploying:** put it behind a TLS-terminating reverse proxy, set
 `RELAY_SECURE=1`, and make sure the proxy does not buffer `text/event-stream`
@@ -47,10 +66,14 @@ server/
   api.js       REST handlers — every route re-checks membership
   realtime.js  Server-Sent Events hub, presence, resumable streams
   bots.js      the simulated colleagues, running server-side
+  webauthn.js  passkey ceremonies: challenges, attestation, signature checks
+  cbor.js      minimal CBOR decoder for WebAuthn structures
+  files.js     attachment storage, type sniffing, image dimensions
+  mailer.js    SMTP client (STARTTLS, AUTH PLAIN/LOGIN)
 public/
   index.html   app shell, icon sprite, dialogs
   css/app.css  design system: tokens, 10 themes, components, a11y switches
-  js/api.js    HTTP + EventSource client
+  js/api.js    HTTP + EventSource client, WebAuthn and upload helpers
   js/store.js  client cache over the API; keeps reads synchronous
   js/ui.js     chat UI: sidebar, messages, composer, search, settings
   js/settings.js, js/palette.js, js/util.js
@@ -84,17 +107,25 @@ long outage the client pulls a fresh snapshot instead.
 
 | Method | Notes |
 | --- | --- |
+| **Passkey (WebAuthn)** | Real ceremonies with server-side verification: the server issues single-use challenges, parses the authenticator's CBOR attestation, stores the COSE public key, and verifies each assertion signature over `authenticatorData ‖ SHA-256(clientDataJSON)`. Origin and RP-ID hash are checked, and a signature counter that fails to advance is rejected as a possible cloned authenticator. ES256 and RS256 are supported |
 | **Email + password** | scrypt-hashed server-side |
-| **One-time email code** | Real single-use code with a 10-minute expiry and an attempt cap. No mail transport is configured yet, so the code is shown in an on-screen demo inbox — wiring SMTP at `/auth/code/request` is the only remaining step |
+| **One-time email code** | Single-use, 10-minute expiry, attempt-capped. Emailed when SMTP is configured; otherwise shown on screen |
 | **Quick-unlock PIN** | 4–6 digits, verified server-side, offered on the sign-in screen for the last account used on this device |
 | **Guest** | Instant session. Several guests can be signed in at once, each with a unique name and colour, and they can find and message each other. A guest who never chatted is removed on sign-out; one who did is retired, so their name still resolves in everyone else's history |
 
-**Passkeys are not available yet.** Real WebAuthn needs server-side signature
-verification against a stored credential public key; a client-only version
-would look like security without providing any, so the control is disabled
-until it is implemented properly.
+Passkeys are managed under Settings → Account & security, where each one can be
+listed and revoked. Registration uses `attestation: 'none'`, so the
+authenticator's identity is not asserted — only possession of the private key,
+which is what signs you in.
 
 ## Messaging
+
+**Attachments:** images and files up to 10 MB, four per message, added by button,
+drag-and-drop or paste. The stored type is sniffed from the file's own magic
+bytes rather than trusted from the client, so a script renamed `.png` is served
+as an inert download; only a small allow-list of image types is ever served
+inline, behind `Content-Disposition`, `nosniff` and a `default-src 'none'; sandbox`
+CSP. Downloads are membership-checked, and deleting a message deletes its files.
 
 Live delivery with distinct status icons (sending, sent ✓, delivered ✓✓, read),
 typing indicators, read receipts you can switch off (the server then withholds
@@ -109,8 +140,14 @@ message history, with a separate in-conversation search that cycles matches.
 Anyone you can find you can add to **contacts**, which get their own sidebar tab
 and sort to the top of search.
 
+History loads the most recent 200 messages per conversation, with a **Load
+earlier messages** control that pages backwards while holding your reading
+position steady.
+
 Keyboard: `Ctrl+K` search, `Alt+↑/↓` switch conversation, `Alt+N` new chat,
 `↑` edit your last message, `Ctrl+,` settings, `?` help, `Esc` cancel.
+Inside the message list, `↑`/`↓` move between messages, `Home`/`End` jump to the
+ends, `Enter` opens a message's actions, and `R`/`E`/`C` reply, edit or copy.
 
 ## Accessibility
 
@@ -125,22 +162,29 @@ Keyboard: `Ctrl+K` search, `Alt+↑/↓` switch conversation, `Alt+N` new chat,
   links, 44 px large-target mode, always-on timestamps.
 - Full keyboard operability, skip link, semantic landmarks, focus-trapped native
   dialogs, and `aria-live` announcements for incoming messages.
+- The message list is a **single tab stop** using a roving tabindex, so reaching
+  the composer never means tabbing through hundreds of per-message buttons.
+  Arrow keys move between messages and `Enter` opens the actions for the focused
+  one.
 
 Settings are stored on your account, so they follow you between devices.
 
 ## Known gaps
 
-These are real and worth naming rather than hiding:
+Worth naming rather than hiding:
 
-- **Passkeys** — see above.
-- **Email delivery** — login codes are generated and verified for real, but
-  displayed on screen instead of emailed.
-- **Message pagination** — `/api/bootstrap` sends the most recent 200 messages
-  per conversation and there is no "load older" control yet.
-- **Rendering** — the message list is rebuilt on each change, which is fine at
-  present scale but wants incremental updates or virtualization for very long
-  histories.
-- **Keyboard depth in the message list** — each message exposes its action
-  buttons in the tab order; this should become a roving tabindex so the list is
-  a single tab stop.
-- **Attachments** — text only for now.
+- **Attestation is not validated.** Registration uses `attestation: 'none'`, so
+  Relay verifies possession of the key but does not attest which authenticator
+  model produced it. That is the right default for a normal deployment; an
+  enterprise that must allow-list hardware would need full attestation parsing.
+- **Very long histories still render every loaded message.** Updates are now
+  incremental and history is paged, so the list only grows when you ask it to,
+  but there is no windowing — scrolling back through tens of thousands of
+  messages in one sitting would eventually get heavy.
+- **Attachments are not scanned or thumbnailed.** Files are stored as uploaded,
+  served inertly, and capped at 10 MB; there is no virus scanning, no
+  transcoding, and images are sent at full size rather than as thumbnails.
+- **No push notifications.** Desktop notifications work while a tab is open;
+  there is no service worker or Web Push, so a closed app is silent.
+- **Single-node only.** The SSE hub and rate limiter hold state in process, so
+  running more than one instance would need a shared bus and store.

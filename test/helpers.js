@@ -9,12 +9,14 @@ import * as db from '../server/db.js';
 import * as auth from '../server/auth.js';
 import * as rt from '../server/realtime.js';
 import { createApp } from '../server/index.js';
+import * as files from '../server/files.js';
 import { seedBots, cancelBotTimers } from '../server/bots.js';
 
 export async function startTestServer() {
   const dir = mkdtempSync(join(tmpdir(), 'relay-test-'));
   const file = join(dir, 'test.db');
   db.open(file);
+  await files.init(join(dir, 'uploads'));
   seedBots();
   auth.resetRateLimits();
   // Limits are exercised deliberately in their own test; elsewhere they would

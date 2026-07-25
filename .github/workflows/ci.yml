@@ -27,6 +27,13 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Verify no secrets or database files are committed
+        run: |
+          if git ls-files | grep -E '(^|/)(data/|.*\.db$)'; then
+            echo "database or upload artifacts are tracked" >&2
+            exit 1
+          fi
+
       - name: Server starts cleanly
         run: |
           node server/index.js &

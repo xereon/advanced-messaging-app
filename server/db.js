@@ -52,6 +52,41 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
+    CREATE TABLE IF NOT EXISTS credentials (
+      credential_id  TEXT PRIMARY KEY,
+      user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      public_key     TEXT NOT NULL,
+      alg            INTEGER NOT NULL,
+      sign_count     INTEGER NOT NULL DEFAULT 0,
+      label          TEXT,
+      created_at     INTEGER NOT NULL,
+      last_used_at   INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_credentials_user ON credentials(user_id);
+
+    -- Challenges are single-use and short-lived; rows are deleted on redemption.
+    CREATE TABLE IF NOT EXISTS webauthn_challenges (
+      challenge   TEXT PRIMARY KEY,
+      user_id     TEXT,
+      purpose     TEXT NOT NULL,
+      expires_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS attachments (
+      id          TEXT PRIMARY KEY,
+      msg_id      TEXT REFERENCES messages(id) ON DELETE CASCADE,
+      convo_id    TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name        TEXT NOT NULL,
+      mime        TEXT NOT NULL,
+      size        INTEGER NOT NULL,
+      width       INTEGER,
+      height      INTEGER,
+      path        TEXT NOT NULL,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(msg_id);
+
     CREATE TABLE IF NOT EXISTS login_codes (
       email       TEXT PRIMARY KEY,
       code_hash   TEXT NOT NULL,

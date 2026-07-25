@@ -65,6 +65,83 @@ export const changePassword = (current, next) => post('/account/password', { cur
 export const deleteAccount = () => del('/account');
 export const exportData = () => get('/export');
 
+/* ---------- passkeys ---------- */
+
+const b64urlToBuf = (s) => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+const bufToB64url = (b) => btoa(String.fromCharCode(...new Uint8Array(b)))
+  .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+export const passkeysSupported = () => !!(
+  window.PublicKeyCredential && navigator.credentials?.create && window.isSecureContext
+);
+
+export async function registerPasskey(label) {
+  const options = await post('/auth/passkey/register/options');
+  const credential = await navigator.credentials.create({
+    publicKey: {
+      ...options,
+      challenge: b64urlToBuf(options.challenge),
+      user: { ...options.user, id: b64urlToBuf(options.user.id) },
+      excludeCredentials: (options.excludeCredentials || []).map((c) => ({ ...c, id: b64urlToBuf(c.id) })),
+    },
+  });
+  if (!credential) throw new ApiError(0, 'No passkey was created.');
+  return post('/auth/passkey/register/verify', {
+    challenge: options.challenge,
+    label,
+    clientDataJSON: bufToB64url(credential.response.clientDataJSON),
+    attestationObject: bufToB64url(credential.response.attestationObject),
+  });
+}
+
+export async function passkeySignIn() {
+  const options = await post('/auth/passkey/login/options');
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      ...options,
+      challenge: b64urlToBuf(options.challenge),
+      allowCredentials: (options.allowCredentials || []).map((c) => ({ ...c, id: b64urlToBuf(c.id) })),
+    },
+    mediation: 'optional',
+  });
+  if (!assertion) throw new ApiError(0, 'No passkey was offered.');
+  return post('/auth/passkey/login/verify', {
+    challenge: options.challenge,
+    credentialId: bufToB64url(assertion.rawId),
+    clientDataJSON: bufToB64url(assertion.response.clientDataJSON),
+    authenticatorData: bufToB64url(assertion.response.authenticatorData),
+    signature: bufToB64url(assertion.response.signature),
+  });
+}
+
+export const listPasskeys = () => get('/account/passkeys');
+export const deletePasskey = (id) => del(`/account/passkeys/${encodeURIComponent(id)}`);
+
+/* ---------- history & attachments ---------- */
+
+export const olderMessages = (convoId, beforeSeq, limit = 50) =>
+  get(`/conversations/${encodeURIComponent(convoId)}/messages?before=${beforeSeq}&limit=${limit}`);
+
+/** Uploads the raw file; the name and type ride in headers. */
+export async function uploadAttachment(convoId, file, { onProgress } = {}) {
+  const res = await fetch(`/api/conversations/${encodeURIComponent(convoId)}/attachments`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'X-Relay-Client': '1',
+      'X-Relay-Filename': encodeURIComponent(file.name || 'file'),
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file,
+    duplex: 'half',
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!res.ok) throw new ApiError(res.status, data.error || 'Upload failed.');
+  onProgress?.(1);
+  return data.attachment;
+}
+
 /* ---------- live stream ---------- */
 
 /** Opens the SSE stream. EventSource reconnects by itself and replays missed

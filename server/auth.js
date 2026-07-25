@@ -210,6 +210,54 @@ export async function redeemLoginCode(email, code) {
   return findByEmail(clean);
 }
 
+/* ---------- WebAuthn credential storage ---------- */
+
+const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+
+export function storeChallenge(challenge, purpose, userId = null) {
+  handle().prepare(
+    'INSERT INTO webauthn_challenges (challenge, user_id, purpose, expires_at) VALUES (?,?,?,?)',
+  ).run(challenge, userId, purpose, Date.now() + CHALLENGE_TTL_MS);
+}
+
+/** Challenges are single-use: taking one deletes it. */
+export function takeChallenge(challenge, purpose) {
+  const db = handle();
+  db.prepare('DELETE FROM webauthn_challenges WHERE expires_at < ?').run(Date.now());
+  const row = db.prepare(
+    'SELECT * FROM webauthn_challenges WHERE challenge = ? AND purpose = ?',
+  ).get(String(challenge || ''), purpose);
+  if (!row) return null;
+  db.prepare('DELETE FROM webauthn_challenges WHERE challenge = ?').run(row.challenge);
+  return row.expires_at < Date.now() ? null : row;
+}
+
+export function saveCredential(userId, cred, label) {
+  handle().prepare(
+    `INSERT INTO credentials (credential_id, user_id, public_key, alg, sign_count, label, created_at)
+     VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(credential_id) DO UPDATE SET public_key = excluded.public_key,
+       alg = excluded.alg, sign_count = excluded.sign_count`,
+  ).run(cred.credentialId, userId, cred.publicKey, cred.alg, cred.signCount, label || null, Date.now());
+}
+
+export function credentialsOf(userId) {
+  return handle().prepare('SELECT * FROM credentials WHERE user_id = ? ORDER BY created_at').all(userId);
+}
+
+export function findCredential(credentialId) {
+  return handle().prepare('SELECT * FROM credentials WHERE credential_id = ?').get(String(credentialId || '')) || null;
+}
+
+export function touchCredential(credentialId, signCount) {
+  handle().prepare('UPDATE credentials SET sign_count = ?, last_used_at = ? WHERE credential_id = ?')
+    .run(signCount, Date.now(), credentialId);
+}
+
+export function deleteCredential(userId, credentialId) {
+  handle().prepare('DELETE FROM credentials WHERE user_id = ? AND credential_id = ?').run(userId, credentialId);
+}
+
 /* ---------- rate limiting ---------- */
 
 const buckets = new Map();

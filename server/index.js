@@ -2,6 +2,7 @@
 // No framework; node:http plus the modules in this folder.
 
 import { createServer } from 'node:http';
+import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,12 +11,16 @@ import * as db from './db.js';
 import * as auth from './auth.js';
 import * as api from './api.js';
 import * as rt from './realtime.js';
+import * as webauthn from './webauthn.js';
+import * as files from './files.js';
+import * as mailer from './mailer.js';
 import { seedBots, seedConversationsFor, cancelBotTimers } from './bots.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PUBLIC_DIR = join(ROOT, 'public');
 const PORT = Number(process.env.PORT || 8130);
 const DB_FILE = process.env.RELAY_DB || join(ROOT, 'data', 'relay.db');
+const UPLOAD_DIR = process.env.RELAY_UPLOADS || join(ROOT, 'data', 'uploads');
 const SECURE_COOKIES = process.env.RELAY_SECURE === '1';
 const MAX_BODY = 256 * 1024;
 
@@ -73,6 +78,43 @@ function readBody(req) {
 
 const clientIp = (req) => req.socket.remoteAddress || 'unknown';
 
+/** Enough to recognise your own address, not enough to disclose someone's. */
+function maskEmail(email) {
+  const [local = '', domain = ''] = String(email).split('@');
+  const head = local.slice(0, 2);
+  return `${head}${'•'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
+}
+
+/** Credential rows as the client should see them — never the public key. */
+const publicCredential = (row) => ({
+  id: row.credential_id,
+  label: row.label,
+  createdAt: row.created_at,
+  lastUsedAt: row.last_used_at,
+});
+
+/**
+ * Serve a stored attachment. Only types on the inline allow-list keep their
+ * real Content-Type; everything else is forced to a download so nothing a user
+ * uploaded can execute in the origin. A restrictive CSP backs that up.
+ */
+function streamAttachment(req, res, row, forceDownload) {
+  const inline = files.isInlineImage(row.mime) && !forceDownload;
+  const disposition = inline ? 'inline' : 'attachment';
+  const asciiName = row.name.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '');
+  const stream = createReadStream(row.path);
+  stream.on('error', () => { if (!res.headersSent) fail(res, 404, 'File is missing.'); else res.destroy(); });
+  res.writeHead(200, {
+    'Content-Type': inline ? row.mime : 'application/octet-stream',
+    'Content-Length': row.size,
+    'Content-Disposition': `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(row.name)}`,
+    'Content-Security-Policy': "default-src 'none'; sandbox",
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'private, max-age=31536000, immutable',
+  });
+  stream.pipe(res);
+}
+
 /* ---------- static ---------- */
 
 async function serveStatic(req, res, pathname) {
@@ -113,8 +155,12 @@ async function handleApi(req, res, url) {
     return fail(res, 403, 'Missing client header.');
   }
 
-  const body = SAFE.has(method) ? {} : await readBody(req);
+  // File uploads keep their raw stream — reading it as JSON here would consume
+  // the body before the upload handler ever sees it.
+  const isUpload = method === 'POST' && /^\/conversations\/[^/]+\/attachments$/.test(path);
+  const body = SAFE.has(method) || isUpload ? {} : await readBody(req);
   const need = () => { if (!me) throw new api.HttpError(401, 'Sign in first.'); return me; };
+  let m;
 
   const startSession = (user, method_, ttlMs) => {
     const { token, expiresAt } = auth.createSession(user.id, method_, ttlMs ? { ttlMs } : {});
@@ -171,9 +217,18 @@ async function handleApi(req, res, url) {
       return fail(res, 429, 'Too many code requests. Wait a few minutes.');
     }
     const { code, user } = await auth.issueLoginCode(body.email);
-    // No mail transport is configured, so the code comes back for the on-screen
-    // demo inbox. Wiring an SMTP provider here is the one remaining step to
-    // make this a production email flow — see README.
+    if (mailer.isConfigured()) {
+      try {
+        await mailer.send({ to: user.email, ...mailer.loginCodeEmail(user.name, code) });
+        // The code is never returned once it has actually been emailed.
+        return send(res, 200, { delivery: 'email', to: maskEmail(user.email) });
+      } catch (err) {
+        console.error('[relay] SMTP delivery failed:', err.message);
+        return fail(res, 502, 'Could not send the email. Try again, or use your password.');
+      }
+    }
+    // Without a mail transport the code is shown on screen instead. Set the
+    // RELAY_SMTP_* variables to switch to real delivery.
     return send(res, 200, { delivery: 'demo-inbox', code, name: user.name });
   }
 
@@ -192,6 +247,98 @@ async function handleApi(req, res, url) {
     const ok = user && await auth.verifySecret(body.pin, user.pin_salt, user.pin_hash);
     if (!ok) return fail(res, 401, 'That PIN is not right.');
     return send(res, 200, { user: auth.publicUser(user) }, startSession(user, 'pin'));
+  }
+
+  /* --- passkeys (WebAuthn) --- */
+
+  // The relying-party id is the site's hostname; the browser refuses anything
+  // that does not match the page it is on.
+  const host = String(req.headers.host || 'localhost');
+  const rpId = host.split(':')[0];
+  const expectedOrigins = [
+    `http://${host}`,
+    `https://${host}`,
+    ...(process.env.RELAY_ORIGIN ? [process.env.RELAY_ORIGIN] : []),
+  ];
+
+  if (path === '/auth/passkey/register/options' && method === 'POST') {
+    const user = need();
+    const options = webauthn.registrationOptions({
+      user: auth.publicUser(user),
+      rpId,
+      rpName: 'Relay',
+      excludeCredentialIds: auth.credentialsOf(user.id).map((c) => c.credential_id),
+    });
+    auth.storeChallenge(options.challenge, 'register', user.id);
+    return send(res, 200, options);
+  }
+
+  if (path === '/auth/passkey/register/verify' && method === 'POST') {
+    const user = need();
+    const pending = auth.takeChallenge(body.challenge, 'register');
+    if (!pending || pending.user_id !== user.id) return fail(res, 400, 'That registration expired. Try again.');
+    let credential;
+    try {
+      credential = webauthn.verifyRegistration({
+        clientDataJSON: body.clientDataJSON,
+        attestationObject: body.attestationObject,
+        expectedChallenge: pending.challenge,
+        expectedOrigins,
+        rpId,
+      });
+    } catch (err) {
+      return fail(res, 400, err.message);
+    }
+    auth.saveCredential(user.id, credential, body.label);
+    return send(res, 201, { credentials: auth.credentialsOf(user.id).map(publicCredential) });
+  }
+
+  if (path === '/auth/passkey/login/options' && method === 'POST') {
+    if (!auth.rateLimit(`passkey:${clientIp(req)}`, { limit: 30, windowMs: 15 * 60 * 1000 })) {
+      return fail(res, 429, 'Too many attempts. Wait a few minutes.');
+    }
+    // Discoverable credentials: no allow-list, so the browser offers whichever
+    // passkey the user has for this site without us naming an account first.
+    const options = webauthn.authenticationOptions({ rpId });
+    auth.storeChallenge(options.challenge, 'login');
+    return send(res, 200, options);
+  }
+
+  if (path === '/auth/passkey/login/verify' && method === 'POST') {
+    const pending = auth.takeChallenge(body.challenge, 'login');
+    if (!pending) return fail(res, 400, 'That sign-in expired. Try again.');
+    const stored = auth.findCredential(body.credentialId);
+    if (!stored) return fail(res, 401, 'That passkey is not registered here.');
+    const user = auth.findById(stored.user_id);
+    if (!user) return fail(res, 401, 'That passkey is not registered here.');
+
+    let result;
+    try {
+      result = webauthn.verifyAuthentication({
+        clientDataJSON: body.clientDataJSON,
+        authenticatorData: body.authenticatorData,
+        signature: body.signature,
+        expectedChallenge: pending.challenge,
+        expectedOrigins,
+        rpId,
+        storedPublicKey: stored.public_key,
+        storedSignCount: stored.sign_count,
+      });
+    } catch (err) {
+      return fail(res, 401, err.message);
+    }
+    auth.touchCredential(stored.credential_id, result.signCount);
+    seedConversationsFor(user.id, user.name);
+    return send(res, 200, { user: auth.publicUser(user) }, startSession(user, 'passkey'));
+  }
+
+  if (path === '/account/passkeys' && method === 'GET') {
+    return send(res, 200, { credentials: auth.credentialsOf(need().id).map(publicCredential) });
+  }
+  if ((m = path.match(/^\/account\/passkeys\/([^/]+)$/)) && method === 'DELETE') {
+    const user = need();
+    auth.deleteCredential(user.id, decodeURIComponent(m[1]));
+    return send(res, 200, { credentials: auth.credentialsOf(user.id).map(publicCredential) });
   }
 
   if (path === '/auth/logout' && method === 'POST') {
@@ -218,10 +365,39 @@ async function handleApi(req, res, url) {
     return send(res, 201, { conversation: api.createConversation(need(), body) });
   }
 
-  let m;
   if ((m = path.match(/^\/conversations\/([^/]+)\/messages$/)) && method === 'POST') {
     return send(res, 201, { message: api.sendMessage(need(), decodeURIComponent(m[1]), body) });
   }
+  if ((m = path.match(/^\/conversations\/([^/]+)\/messages$/)) && method === 'GET') {
+    return send(res, 200, api.history(need(), decodeURIComponent(m[1]), {
+      beforeSeq: url.searchParams.get('before'),
+      limit: url.searchParams.get('limit'),
+    }));
+  }
+
+  // Uploads are raw bodies, not multipart: the filename and type ride in
+  // headers so the stream can go straight to disk with a hard size cap.
+  if ((m = path.match(/^\/conversations\/([^/]+)\/attachments$/)) && method === 'POST') {
+    const user = need();
+    const convoId = decodeURIComponent(m[1]);
+    api.assertConvoMember(convoId, user.id);
+    const attachment = await files.store(req, {
+      userId: user.id,
+      convoId,
+      name: decodeURIComponent(String(req.headers['x-relay-filename'] || 'file')),
+      declaredMime: String(req.headers['content-type'] || '').split(';')[0],
+    });
+    return send(res, 201, { attachment });
+  }
+
+  if ((m = path.match(/^\/attachments\/([^/]+)$/)) && method === 'GET') {
+    if (!me) return fail(res, 401, 'Sign in first.');
+    const row = files.find(decodeURIComponent(m[1]));
+    if (!row) return fail(res, 404, 'Not found.');
+    api.assertConvoMember(row.convo_id, me.id);
+    return streamAttachment(req, res, row, url.searchParams.get('download') === '1');
+  }
+
   if ((m = path.match(/^\/conversations\/([^/]+)\/read$/)) && method === 'POST') {
     return send(res, 200, api.markRead(need(), decodeURIComponent(m[1]), body.at, body.private));
   }
@@ -235,7 +411,7 @@ async function handleApi(req, res, url) {
     return send(res, 200, { message: api.editMessage(need(), decodeURIComponent(m[1]), body.text) });
   }
   if ((m = path.match(/^\/messages\/([^/]+)$/)) && method === 'DELETE') {
-    return send(res, 200, { message: api.deleteMessage(need(), decodeURIComponent(m[1])) });
+    return send(res, 200, { message: await api.deleteMessage(need(), decodeURIComponent(m[1])) });
   }
   if ((m = path.match(/^\/messages\/([^/]+)\/reactions$/)) && method === 'POST') {
     return send(res, 200, { message: api.toggleReaction(need(), decodeURIComponent(m[1]), body.emoji) });
@@ -291,10 +467,14 @@ export function createApp() {
   });
 }
 
-export function start({ port = PORT, dbFile = DB_FILE } = {}) {
+export async function start({ port = PORT, dbFile = DB_FILE, uploadDir = UPLOAD_DIR } = {}) {
   db.open(dbFile);
+  await files.init(uploadDir);
   seedBots();
   auth.pruneExpiredSessions();
+  files.sweepOrphans().catch(() => { /* best effort */ });
+  const sweeper = setInterval(() => files.sweepOrphans().catch(() => {}), 60 * 60 * 1000);
+  sweeper.unref?.();
   const server = createApp();
   server.listen(port, () => {
     console.log(`Relay server listening on http://localhost:${port}`);
@@ -312,4 +492,6 @@ export function start({ port = PORT, dbFile = DB_FILE } = {}) {
   return server;
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) start();
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  start().catch((err) => { console.error('[relay] failed to start:', err); process.exit(1); });
+}
