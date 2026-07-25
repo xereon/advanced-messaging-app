@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light" data-font="system" data-density="cozy">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Relay — a simple, accessible, enterprise-grade messaging demo. Runs entirely in your browser.">
+<title>Relay — Enterprise Messaging</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232458E6'/%3E%3Cpath d='M9 21.5V12a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3h-6.5L9 22.5v-1z' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<svg hidden aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M4 17.5V8a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3H8.5L4 19.5v-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+    <symbol id="i-check-double" viewBox="0 0 24 24"><polyline points="16.5 7 7 16.5 3 12.5"/><polyline points="22 7 12.5 16.5 11 15"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
+    <symbol id="i-chevron-up" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></symbol>
+    <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6.01" y2="10"/><line x1="10" y1="10" x2="10.01" y2="10"/><line x1="14" y1="10" x2="14.01" y2="10"/><line x1="18" y1="10" x2="18.01" y2="10"/><line x1="7" y1="14" x2="17" y2="14"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+    <symbol id="i-droplet" viewBox="0 0 24 24"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></symbol>
+    <symbol id="i-hash" viewBox="0 0 24 24"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></symbol>
+  </defs>
+</svg>
+
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<!-- ============ AUTH SCREEN ============ -->
+<section id="auth-screen" class="auth-screen" aria-labelledby="auth-brand-name">
+  <div class="auth-card">
+    <header class="auth-brand">
+      <span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="#i-logo"/></svg></span>
+      <h1 id="auth-brand-name">Relay</h1>
+      <p class="auth-tagline">Enterprise messaging, without the noise.</p>
+    </header>
+
+    <!-- Sign in -->
+    <form id="signin-form" class="auth-view" data-view="signin" novalidate>
+      <h2 class="auth-title">Sign in</h2>
+      <div id="pin-unlock-slot"></div>
+      <div class="field">
+        <label for="signin-email">Work email</label>
+        <input id="signin-email" name="email" type="email" autocomplete="email" required
+               placeholder="you@company.com" spellcheck="false">
+        <p class="field-error" id="signin-email-err" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <div class="label-row">
+          <label for="signin-password">Password</label>
+          <button type="button" class="link-btn" id="toggle-signin-pw" aria-pressed="false">Show</button>
+        </div>
+        <input id="signin-password" name="password" type="password" autocomplete="current-password" required>
+        <p class="field-error" id="signin-password-err" role="alert" hidden></p>
+      </div>
+      <label class="check-row"><input type="checkbox" id="remember-me" checked><span>Keep me signed in on this device</span></label>
+      <button type="submit" class="btn primary block">Sign in</button>
+      <div class="divider" role="separator" aria-label="Or continue with"><span>or continue with</span></div>
+      <div class="alt-auth">
+        <button type="button" class="btn alt" id="btn-passkey"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg>Passkey</button>
+        <button type="button" class="btn alt" id="btn-magic"><svg class="icon" aria-hidden="true"><use href="#i-mail"/></svg>Email code</button>
+        <button type="button" class="btn alt" id="btn-guest"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Guest</button>
+      </div>
+      <p class="auth-switch">New to Relay? <button type="button" class="link-btn" data-goto="signup">Create an account</button></p>
+    </form>
+
+    <!-- Sign up -->
+    <form id="signup-form" class="auth-view" data-view="signup" hidden novalidate>
+      <h2 class="auth-title">Create your account</h2>
+      <div class="field">
+        <label for="signup-name">Full name</label>
+        <input id="signup-name" name="name" type="text" autocomplete="name" required maxlength="60" placeholder="Alex Morgan">
+        <p class="field-error" id="signup-name-err" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="signup-email">Work email</label>
+        <input id="signup-email" name="email" type="email" autocomplete="email" required placeholder="you@company.com" spellcheck="false">
+        <p class="field-error" id="signup-email-err" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <div class="label-row">
+          <label for="signup-password">Password</label>
+          <button type="button" class="link-btn" id="toggle-signup-pw" aria-pressed="false">Show</button>
+        </div>
+        <input id="signup-password" name="password" type="password" autocomplete="new-password" required
+               minlength="8" aria-describedby="pw-meter-label">
+        <div class="pw-meter" aria-hidden="true"><span id="pw-meter-bar"></span></div>
+        <p class="hint" id="pw-meter-label" aria-live="polite">Use at least 8 characters.</p>
+        <p class="field-error" id="signup-password-err" role="alert" hidden></p>
+      </div>
+      <button type="submit" class="btn primary block">Create account</button>
+      <p class="auth-switch">Already have an account? <button type="button" class="link-btn" data-goto="signin">Sign in</button></p>
+    </form>
+
+    <!-- Magic code -->
+    <form id="magic-form" class="auth-view" data-view="magic" hidden novalidate>
+      <h2 class="auth-title">Sign in with an email code</h2>
+      <div data-magic-step="1">
+        <div class="field">
+          <label for="magic-email">Work email</label>
+          <input id="magic-email" name="email" type="email" autocomplete="email" placeholder="you@company.com" spellcheck="false">
+          <p class="field-error" id="magic-email-err" role="alert" hidden></p>
+        </div>
+        <button type="submit" class="btn primary block">Send code</button>
+      </div>
+      <div data-magic-step="2" hidden>
+        <div class="demo-inbox" role="status">
+          <svg class="icon" aria-hidden="true"><use href="#i-info"/></svg>
+          <p><strong>Demo inbox</strong> — Relay runs entirely in your browser, so no real email is sent. Your one-time code is <strong id="magic-demo-code" class="code-chip"></strong></p>
+        </div>
+        <div class="field">
+          <label for="magic-code">6-digit code</label>
+          <input id="magic-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]{6}" maxlength="6" placeholder="••••••">
+          <p class="field-error" id="magic-code-err" role="alert" hidden></p>
+        </div>
+        <button type="submit" class="btn primary block">Verify &amp; sign in</button>
+        <button type="button" class="link-btn block-center" id="magic-resend">Send a new code</button>
+      </div>
+      <p class="auth-switch"><button type="button" class="link-btn" data-goto="signin"><svg class="icon sm" aria-hidden="true"><use href="#i-chevron-left"/></svg>Back to sign in</button></p>
+    </form>
+  </div>
+  <p class="auth-footnote">Relay is a local demo — accounts, messages and settings are stored only in this browser. Nothing leaves your machine.</p>
+</section>
+
+<!-- ============ APP SHELL ============ -->
+<div id="chat-screen" class="chat-screen" hidden>
+  <header class="topbar">
+    <span class="brand-mark sm" aria-hidden="true"><svg class="icon"><use href="#i-logo"/></svg></span>
+    <span class="topbar-title">Relay</span>
+    <div class="topbar-search">
+      <svg class="icon sm" aria-hidden="true"><use href="#i-search"/></svg>
+      <input id="global-search" type="search" placeholder="Search conversations and messages"
+             aria-label="Search conversations and messages" autocomplete="off">
+      <kbd class="kbd-hint" aria-hidden="true">Ctrl K</kbd>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn icon-btn" id="btn-new-chat" title="New conversation" aria-label="New conversation"><svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg></button>
+      <button class="btn icon-btn" id="btn-settings" title="Settings" aria-label="Settings" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg></button>
+      <button class="btn avatar-btn" id="btn-user-menu" aria-haspopup="true" aria-expanded="false" aria-label="Account menu">
+        <span class="avatar" id="me-avatar" aria-hidden="true">A</span>
+      </button>
+      <div class="menu" id="user-menu" role="menu" hidden>
+        <div class="menu-header" id="user-menu-header"></div>
+        <button role="menuitem" data-action="open-settings"><svg class="icon sm" aria-hidden="true"><use href="#i-sliders"/></svg>Settings</button>
+        <button role="menuitem" data-action="shortcuts"><svg class="icon sm" aria-hidden="true"><use href="#i-keyboard"/></svg>Keyboard shortcuts</button>
+        <hr>
+        <button role="menuitem" data-action="signout" class="danger-item"><svg class="icon sm" aria-hidden="true"><use href="#i-logout"/></svg>Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav id="sidebar" class="sidebar" aria-label="Conversations">
+      <div class="sidebar-tabs" role="tablist" aria-label="Filter conversations">
+        <button role="tab" id="tab-all" aria-selected="true" data-filter="all">All</button>
+        <button role="tab" id="tab-unread" aria-selected="false" data-filter="unread">Unread</button>
+        <button role="tab" id="tab-pinned" aria-selected="false" data-filter="pinned">Pinned</button>
+      </div>
+      <div id="convo-list" class="convo-list" role="list"></div>
+      <div id="search-results" class="search-results" hidden></div>
+    </nav>
+
+    <main id="main" class="main" tabindex="-1">
+      <div id="empty-state" class="empty-state">
+        <svg class="icon xl" aria-hidden="true"><use href="#i-message"/></svg>
+        <h2>Pick a conversation</h2>
+        <p>Choose a conversation from the list, or start a new one.</p>
+        <button class="btn primary" id="empty-new-chat"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>New conversation</button>
+      </div>
+
+      <section id="convo" class="convo" hidden aria-label="Conversation">
+        <header class="convo-header">
+          <button class="btn icon-btn back-btn" id="btn-back" aria-label="Back to conversation list"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+          <span class="avatar" id="convo-avatar" aria-hidden="true"></span>
+          <div class="convo-title-wrap">
+            <h2 id="convo-title" class="convo-title"></h2>
+            <p id="convo-subtitle" class="convo-subtitle"></p>
+          </div>
+          <div class="convo-actions">
+            <button class="btn icon-btn" id="btn-convo-search" title="Search in conversation" aria-label="Search in conversation" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></button>
+            <button class="btn icon-btn" id="btn-convo-pin" title="Pin conversation" aria-label="Pin conversation" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-pin"/></svg></button>
+            <button class="btn icon-btn" id="btn-convo-more" title="Conversation options" aria-label="Conversation options" aria-haspopup="true" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg></button>
+            <div class="menu" id="convo-menu" role="menu" hidden>
+              <button role="menuitem" data-action="mute"><svg class="icon sm" aria-hidden="true"><use href="#i-bell"/></svg><span id="mute-label">Mute notifications</span></button>
+              <button role="menuitem" data-action="export"><svg class="icon sm" aria-hidden="true"><use href="#i-download"/></svg>Export as text</button>
+              <button role="menuitem" data-action="mark-read"><svg class="icon sm" aria-hidden="true"><use href="#i-check-double"/></svg>Mark as read</button>
+              <hr>
+              <button role="menuitem" data-action="clear" class="danger-item"><svg class="icon sm" aria-hidden="true"><use href="#i-trash"/></svg>Clear history…</button>
+            </div>
+          </div>
+        </header>
+
+        <div class="convo-search" id="convo-search-bar" hidden>
+          <svg class="icon sm" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="convo-search-input" type="search" placeholder="Search this conversation" aria-label="Search this conversation" autocomplete="off">
+          <span id="convo-search-count" class="search-count" aria-live="polite"></span>
+          <button class="btn icon-btn sm" id="search-prev" aria-label="Previous match"><svg class="icon sm" aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+          <button class="btn icon-btn sm" id="search-next" aria-label="Next match"><svg class="icon sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></button>
+          <button class="btn icon-btn sm" id="search-close" aria-label="Close search"><svg class="icon sm" aria-hidden="true"><use href="#i-x"/></svg></button>
+        </div>
+
+        <div id="messages" class="messages" role="log" aria-label="Messages" aria-live="off"></div>
+        <button id="jump-latest" class="jump-latest" hidden>
+          <svg class="icon sm" aria-hidden="true"><use href="#i-chevron-down"/></svg><span id="jump-latest-label">Latest messages</span>
+        </button>
+        <p id="typing-indicator" class="typing-indicator" aria-live="polite" hidden></p>
+
+        <div id="composer-context" class="composer-context" hidden>
+          <div class="composer-context-body">
+            <p class="composer-context-title" id="composer-context-title"></p>
+            <p class="composer-context-text" id="composer-context-text"></p>
+          </div>
+          <button class="btn icon-btn sm" id="composer-context-close" aria-label="Cancel"><svg class="icon sm" aria-hidden="true"><use href="#i-x"/></svg></button>
+        </div>
+
+        <form id="composer" class="composer">
+          <button type="button" class="btn icon-btn" id="btn-emoji" title="Insert emoji" aria-label="Insert emoji" aria-haspopup="true" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-smile"/></svg></button>
+          <div class="composer-input-wrap">
+            <label for="composer-input" class="visually-hidden">Message</label>
+            <textarea id="composer-input" rows="1" placeholder="Write a message…" maxlength="4000"
+                      aria-describedby="char-count enter-hint"></textarea>
+            <span id="char-count" class="char-count" aria-live="polite" hidden></span>
+          </div>
+          <button type="submit" class="btn primary icon-btn send-btn" id="btn-send" aria-label="Send message" disabled><svg class="icon" aria-hidden="true"><use href="#i-send"/></svg></button>
+          <span id="enter-hint" class="visually-hidden">Press Enter to send, Shift and Enter for a new line.</span>
+          <div class="menu emoji-menu" id="emoji-menu" hidden></div>
+        </form>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- ============ SETTINGS ============ -->
+<dialog id="settings-dialog" class="dialog settings-dialog" aria-labelledby="settings-title">
+  <header class="dialog-header">
+    <h2 id="settings-title">Settings</h2>
+    <button class="btn icon-btn" id="settings-close" aria-label="Close settings"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <div class="settings-body">
+    <nav class="settings-nav" aria-label="Settings sections">
+      <button class="settings-nav-item" data-panel="appearance" aria-current="true"><svg class="icon sm" aria-hidden="true"><use href="#i-droplet"/></svg>Appearance</button>
+      <button class="settings-nav-item" data-panel="accessibility"><svg class="icon sm" aria-hidden="true"><use href="#i-eye"/></svg>Accessibility</button>
+      <button class="settings-nav-item" data-panel="chat"><svg class="icon sm" aria-hidden="true"><use href="#i-message"/></svg>Chat &amp; notifications</button>
+      <button class="settings-nav-item" data-panel="account"><svg class="icon sm" aria-hidden="true"><use href="#i-user"/></svg>Account &amp; security</button>
+      <button class="settings-nav-item" data-panel="data"><svg class="icon sm" aria-hidden="true"><use href="#i-database"/></svg>Data &amp; privacy</button>
+      <button class="settings-nav-item" data-panel="about"><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg>About &amp; shortcuts</button>
+    </nav>
+    <div class="settings-panels">
+
+      <section class="settings-panel" data-panel="appearance" aria-label="Appearance settings">
+        <h3>Theme</h3>
+        <p class="hint">Every theme meets WCAG AA contrast for text. Colour-vision themes use the Okabe-Ito palette and never rely on colour alone.</p>
+        <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme"></div>
+        <h3>Text</h3>
+        <div class="setting-row">
+          <label for="set-font-scale">Text size <output id="out-font-scale">100%</output></label>
+          <input type="range" id="set-font-scale" min="85" max="150" step="5" data-setting="fontScale">
+        </div>
+        <div class="setting-row">
+          <label for="set-line-height">Line spacing <output id="out-line-height">1.5</output></label>
+          <input type="range" id="set-line-height" min="1.3" max="2" step="0.1" data-setting="lineHeight">
+        </div>
+        <div class="setting-row">
+          <label for="set-letter-spacing">Letter spacing <output id="out-letter-spacing">0</output></label>
+          <input type="range" id="set-letter-spacing" min="0" max="0.1" step="0.01" data-setting="letterSpacing">
+        </div>
+        <div class="setting-row">
+          <label for="set-font-family">Font</label>
+          <select id="set-font-family" data-setting="fontFamily">
+            <option value="system">System default</option>
+            <option value="legible">Legible (Verdana)</option>
+            <option value="dyslexic">Dyslexia-friendly</option>
+            <option value="serif">Serif (Georgia)</option>
+            <option value="mono">Monospace</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <label for="set-density">Layout density</label>
+          <select id="set-density" data-setting="density">
+            <option value="compact">Compact</option>
+            <option value="cozy">Cozy</option>
+            <option value="comfortable">Comfortable</option>
+          </select>
+        </div>
+        <label class="check-row"><input type="checkbox" id="set-bold-text" data-setting="boldText"><span>Bold body text</span></label>
+        <div class="preview-bubble-wrap" aria-hidden="true">
+          <p class="hint">Preview</p>
+          <div class="msg in demo"><div class="bubble">The quarterly numbers look great — nice work! 0O 1lI</div></div>
+          <div class="msg out demo"><div class="bubble">Thanks! Shipping the report at 4 pm.</div></div>
+        </div>
+      </section>
+
+      <section class="settings-panel" data-panel="accessibility" hidden aria-label="Accessibility settings">
+        <h3>Vision</h3>
+        <label class="check-row"><input type="checkbox" id="set-underline-links" data-setting="underlineLinks"><span>Always underline links</span></label>
+        <label class="check-row"><input type="checkbox" id="set-strong-focus" data-setting="strongFocus"><span>High-visibility focus outline</span></label>
+        <label class="check-row"><input type="checkbox" id="set-reduce-transparency" data-setting="reduceTransparency"><span>Reduce transparency and blur</span></label>
+        <label class="check-row"><input type="checkbox" id="set-always-timestamps" data-setting="alwaysTimestamps"><span>Show a timestamp on every message</span></label>
+        <h3>Motion</h3>
+        <label class="check-row"><input type="checkbox" id="set-reduce-motion" data-setting="reduceMotion"><span>Reduce motion (also follows your system preference)</span></label>
+        <h3>Motor &amp; input</h3>
+        <label class="check-row"><input type="checkbox" id="set-large-targets" data-setting="largeTargets"><span>Larger touch targets (44&nbsp;px minimum)</span></label>
+        <label class="check-row"><input type="checkbox" id="set-shortcuts" data-setting="shortcutsEnabled" checked><span>Enable keyboard shortcuts</span></label>
+        <h3>Screen reader</h3>
+        <label class="check-row"><input type="checkbox" id="set-announce" data-setting="announceMessages" checked><span>Announce incoming messages</span></label>
+        <p class="hint">Message status is always shown with distinct icons (clock, single check, double check, filled double check) — never colour alone.</p>
+      </section>
+
+      <section class="settings-panel" data-panel="chat" hidden aria-label="Chat and notification settings">
+        <h3>Composing</h3>
+        <label class="check-row"><input type="checkbox" id="set-enter-send" data-setting="enterToSend" checked><span>Press Enter to send (off: Ctrl+Enter sends)</span></label>
+        <h3>Privacy</h3>
+        <label class="check-row"><input type="checkbox" id="set-read-receipts" data-setting="readReceipts" checked><span>Send read receipts</span></label>
+        <label class="check-row"><input type="checkbox" id="set-typing" data-setting="typingIndicators" checked><span>Show when I'm typing</span></label>
+        <h3>Time</h3>
+        <label class="check-row"><input type="checkbox" id="set-24h" data-setting="use24h"><span>Use 24-hour time</span></label>
+        <h3>Alerts</h3>
+        <label class="check-row"><input type="checkbox" id="set-sounds" data-setting="sounds" checked><span>Message sounds</span></label>
+        <label class="check-row"><input type="checkbox" id="set-desktop-notifs" data-setting="desktopNotifs"><span>Desktop notifications</span></label>
+        <p class="hint" id="notif-permission-hint" hidden></p>
+      </section>
+
+      <section class="settings-panel" data-panel="account" hidden aria-label="Account and security settings">
+        <h3>Profile</h3>
+        <div class="setting-row">
+          <label for="set-display-name">Display name</label>
+          <input type="text" id="set-display-name" maxlength="60" autocomplete="name">
+        </div>
+        <div class="setting-row">
+          <label id="avatar-color-label">Avatar colour</label>
+          <div id="avatar-colors" class="avatar-colors" role="radiogroup" aria-labelledby="avatar-color-label"></div>
+        </div>
+        <h3>Security</h3>
+        <div class="security-rows" id="security-rows">
+          <div class="security-row">
+            <div><strong>Quick-unlock PIN</strong><p class="hint" id="pin-status">Not set</p></div>
+            <button class="btn" id="btn-set-pin">Set PIN</button>
+          </div>
+          <div class="security-row">
+            <div><strong>Passkey</strong><p class="hint" id="passkey-status">Not registered</p></div>
+            <button class="btn" id="btn-add-passkey">Add passkey</button>
+          </div>
+          <div class="security-row">
+            <div><strong>Password</strong><p class="hint">Used for standard sign-in</p></div>
+            <button class="btn" id="btn-change-password">Change…</button>
+          </div>
+        </div>
+        <h3>Session</h3>
+        <div class="security-row">
+          <div><strong>Sign out</strong><p class="hint">Ends this session on this tab</p></div>
+          <button class="btn" id="btn-signout">Sign out</button>
+        </div>
+        <div class="security-row">
+          <div><strong>Delete account</strong><p class="hint">Removes your profile and settings from this browser</p></div>
+          <button class="btn danger" id="btn-delete-account">Delete…</button>
+        </div>
+      </section>
+
+      <section class="settings-panel" data-panel="data" hidden aria-label="Data and privacy settings">
+        <h3>Your data</h3>
+        <p class="hint">Relay stores everything locally in this browser (localStorage). No servers, no tracking, no analytics.</p>
+        <div class="security-row">
+          <div><strong>Export my data</strong><p class="hint">Download all conversations and settings as JSON</p></div>
+          <button class="btn" id="btn-export-data"><svg class="icon sm" aria-hidden="true"><use href="#i-download"/></svg>Export</button>
+        </div>
+        <div class="security-row">
+          <div><strong>Storage used</strong><p class="hint" id="storage-usage">—</p></div>
+          <button class="btn" id="btn-refresh-storage">Refresh</button>
+        </div>
+        <div class="security-row">
+          <div><strong>Reset settings</strong><p class="hint">Restore all appearance and accessibility defaults</p></div>
+          <button class="btn" id="btn-reset-settings">Reset</button>
+        </div>
+        <div class="security-row">
+          <div><strong>Erase all demo data</strong><p class="hint">Deletes every account, conversation and setting in this browser</p></div>
+          <button class="btn danger" id="btn-wipe">Erase…</button>
+        </div>
+      </section>
+
+      <section class="settings-panel" data-panel="about" hidden aria-label="About and keyboard shortcuts">
+        <h3>Keyboard shortcuts</h3>
+        <table class="shortcuts-table">
+          <caption class="visually-hidden">Keyboard shortcuts</caption>
+          <tbody>
+            <tr><th scope="row">Search</th><td><kbd>Ctrl</kbd> + <kbd>K</kbd></td></tr>
+            <tr><th scope="row">Next / previous conversation</th><td><kbd>Alt</kbd> + <kbd>↓</kbd> / <kbd>↑</kbd></td></tr>
+            <tr><th scope="row">New conversation</th><td><kbd>Alt</kbd> + <kbd>N</kbd></td></tr>
+            <tr><th scope="row">Edit your last message</th><td><kbd>↑</kbd> in an empty composer</td></tr>
+            <tr><th scope="row">New line</th><td><kbd>Shift</kbd> + <kbd>Enter</kbd></td></tr>
+            <tr><th scope="row">Settings</th><td><kbd>Ctrl</kbd> + <kbd>,</kbd></td></tr>
+            <tr><th scope="row">This help</th><td><kbd>?</kbd> (outside a text field)</td></tr>
+            <tr><th scope="row">Close / cancel</th><td><kbd>Esc</kbd></td></tr>
+          </tbody>
+        </table>
+        <h3>Formatting</h3>
+        <p class="hint">Messages support <strong>**bold**</strong>, <em>*italic*</em> and <code>`code`</code>. Links are detected automatically.</p>
+        <h3>Accessibility statement</h3>
+        <p class="hint">Relay targets WCAG 2.2 AA: full keyboard operability, visible focus, semantic landmarks,
+        screen-reader announcements for new messages, respect for reduced-motion and forced-colors system
+        preferences, and themes designed for deuteranopia, protanopia, tritanopia and monochrome vision.
+        Status is always conveyed with icons and text, never colour alone.</p>
+        <h3>About</h3>
+        <p class="hint">Relay v1.0 — a dependency-free messaging demo. Built with plain HTML, CSS and JavaScript. All data stays in your browser.</p>
+      </section>
+    </div>
+  </div>
+</dialog>
+
+<!-- New conversation -->
+<dialog id="new-chat-dialog" class="dialog" aria-labelledby="new-chat-title">
+  <header class="dialog-header">
+    <h2 id="new-chat-title">New conversation</h2>
+    <button class="btn icon-btn" id="new-chat-close" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <div class="dialog-body">
+    <div class="field">
+      <label for="new-chat-search" class="visually-hidden">Search people</label>
+      <input id="new-chat-search" type="search" placeholder="Search people…" autocomplete="off">
+    </div>
+    <div id="directory-list" class="directory-list" role="listbox" aria-label="People"></div>
+    <div class="group-compose" id="group-compose" hidden>
+      <div class="field">
+        <label for="group-name">Group name</label>
+        <input id="group-name" type="text" maxlength="50" placeholder="e.g. Project Aurora">
+      </div>
+      <p class="hint" id="group-count"></p>
+    </div>
+  </div>
+  <footer class="dialog-footer">
+    <button class="btn" id="new-chat-toggle-group" aria-pressed="false"><svg class="icon sm" aria-hidden="true"><use href="#i-users"/></svg>Create a group</button>
+    <button class="btn primary" id="new-chat-start" disabled>Start</button>
+  </footer>
+</dialog>
+
+<!-- PIN setup -->
+<dialog id="pin-dialog" class="dialog sm-dialog" aria-labelledby="pin-dialog-title">
+  <header class="dialog-header">
+    <h2 id="pin-dialog-title">Set a quick-unlock PIN</h2>
+    <button class="btn icon-btn" data-close-dialog aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <form id="pin-form" class="dialog-body" novalidate>
+    <p class="hint">Use 4–6 digits. On this device you'll be able to unlock Relay with the PIN instead of your password.</p>
+    <div class="field">
+      <label for="pin-new">New PIN</label>
+      <input id="pin-new" type="password" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="pin-confirm">Confirm PIN</label>
+      <input id="pin-confirm" type="password" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off">
+      <p class="field-error" id="pin-err" role="alert" hidden></p>
+    </div>
+    <footer class="dialog-footer">
+      <button type="button" class="btn" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn primary">Save PIN</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Change password -->
+<dialog id="password-dialog" class="dialog sm-dialog" aria-labelledby="password-dialog-title">
+  <header class="dialog-header">
+    <h2 id="password-dialog-title">Change password</h2>
+    <button class="btn icon-btn" data-close-dialog aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <form id="password-form" class="dialog-body" novalidate>
+    <div class="field">
+      <label for="pw-current">Current password</label>
+      <input id="pw-current" type="password" autocomplete="current-password">
+    </div>
+    <div class="field">
+      <label for="pw-new">New password</label>
+      <input id="pw-new" type="password" autocomplete="new-password" minlength="8">
+      <p class="field-error" id="pw-change-err" role="alert" hidden></p>
+    </div>
+    <footer class="dialog-footer">
+      <button type="button" class="btn" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn primary">Update password</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Confirm -->
+<dialog id="confirm-dialog" class="dialog sm-dialog" aria-labelledby="confirm-title">
+  <header class="dialog-header">
+    <h2 id="confirm-title">Are you sure?</h2>
+  </header>
+  <div class="dialog-body">
+    <p id="confirm-text"></p>
+    <footer class="dialog-footer">
+      <button class="btn" id="confirm-cancel">Cancel</button>
+      <button class="btn danger" id="confirm-ok">Confirm</button>
+    </footer>
+  </div>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
+<div id="sr-announcer" class="visually-hidden" aria-live="polite"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
