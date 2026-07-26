@@ -8,3 +8,9 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# Local snapshots. These bundle data/ — which means the live database and every
+# uploaded attachment — so they must never be committed.
+*.zip
+*.tar.gz
+*.tgz

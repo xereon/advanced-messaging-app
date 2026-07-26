@@ -206,18 +206,51 @@ function personMatches(user, needle) {
     .some((field) => String(field).toLowerCase().includes(needle));
 }
 
+function peopleOrder(a, b) {
+  const ca = db.isContact(me.id, a.id) ? 0 : 1;
+  const cb = db.isContact(me.id, b.id) ? 0 : 1;
+  if (ca !== cb) return ca - cb;
+  const oa = db.isOnline(a) ? 0 : 1;
+  const ob = db.isOnline(b) ? 0 : 1;
+  return oa !== ob ? oa - ob : a.name.localeCompare(b.name);
+}
+
+/** Matches from what this client already knows about. */
 function searchPeople(q) {
   const needle = String(q).trim().toLowerCase();
-  return directoryPeople()
-    .filter((u) => personMatches(u, needle))
-    .sort((a, b) => {
-      const ca = db.isContact(me.id, a.id) ? 0 : 1;
-      const cb = db.isContact(me.id, b.id) ? 0 : 1;
-      if (ca !== cb) return ca - cb;
-      const oa = db.isOnline(a) ? 0 : 1;
-      const ob = db.isOnline(b) ? 0 : 1;
-      return oa !== ob ? oa - ob : a.name.localeCompare(b.name);
-    });
+  return directoryPeople().filter((u) => personMatches(u, needle)).sort(peopleOrder);
+}
+
+/**
+ * Ask the server who exists.
+ *
+ * The local cache only holds people you already share a conversation with,
+ * plus contacts and the demo accounts. Anyone who registered separately is
+ * simply not in it, so searching the cache alone can never find them — the
+ * directory has to be a server query.
+ */
+let peopleQuerySeq = 0;
+async function fetchPeople(q) {
+  const token = ++peopleQuerySeq;
+  try {
+    const { users } = await db.searchDirectory(q);
+    // A later keystroke already superseded this response.
+    if (token !== peopleQuerySeq) return null;
+    for (const u of users) db.cacheUser(u);
+    return users;
+  } catch {
+    return null;   // offline or refused; cached results still show
+  }
+}
+
+/** Server results unioned with cached ones, deduped and ordered together. */
+function mergePeople(remote, q) {
+  const byId = new Map();
+  for (const u of searchPeople(q)) byId.set(u.id, u);
+  for (const u of remote || []) {
+    if (u.id !== me.id && !u.retired) byId.set(u.id, u);
+  }
+  return [...byId.values()].sort(peopleOrder);
 }
 
 /* ================= sidebar ================= */
@@ -358,6 +391,8 @@ function renderContactsList() {
 
 /* ---------- global search ---------- */
 
+let remotePeople = { q: null, users: [] };
+
 function renderGlobalSearch(q) {
   const results = $('#search-results');
   const list = $('#convo-list');
@@ -416,9 +451,21 @@ function renderGlobalSearch(q) {
   // People you haven't opened a conversation with yet — searching a colleague
   // by name, email or role should be able to start the chat.
   const shownConvoIds = new Set(convoHits.map((c) => c.id));
-  const peopleHits = searchPeople(q)
+  const remote = remotePeople.q === q ? remotePeople.users : null;
+  const peopleHits = mergePeople(remote, q)
     .filter((u) => !shownConvoIds.has(db.dmId(me.id, u.id)))
     .slice(0, 8);
+
+  // Fetch the server's view once per query, then repaint with it. Without this
+  // the People section can only ever list accounts already in the cache.
+  if (remotePeople.q !== q) {
+    fetchPeople(q).then((users) => {
+      if (!users) return;
+      if ($('#global-search').value.trim() !== q) return;
+      remotePeople = { q, users };
+      renderGlobalSearch(q);
+    });
+  }
   if (peopleHits.length) {
     addHeading('People');
     for (const person of peopleHits) {
@@ -1664,12 +1711,24 @@ function openNewChat() {
   $('#new-chat-search').focus();
 }
 
-function renderDirectory(q) {
+async function renderDirectory(q) {
+  // Cached matches appear immediately so typing stays responsive, then the
+  // server's answer replaces them — that is what surfaces accounts this
+  // browser has never seen.
+  paintDirectory(searchPeople(q), q, { pending: true });
+  const remote = await fetchPeople(q);
+  if (remote === null) return;                       // superseded or offline
+  if ($('#new-chat-search').value !== q) return;     // query moved on
+  paintDirectory(mergePeople(remote, q), q, { pending: false });
+}
+
+function paintDirectory(people, q, { pending } = {}) {
   const list = $('#directory-list');
   list.innerHTML = '';
-  const people = searchPeople(q);
   if (!people.length) {
-    list.innerHTML = '<p class="convo-empty">Nobody matches that search.</p>';
+    list.innerHTML = pending
+      ? '<p class="convo-empty">Searching…</p>'
+      : '<p class="convo-empty">Nobody matches that search.</p>';
     return;
   }
   let headed = null;

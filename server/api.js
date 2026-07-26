@@ -156,14 +156,34 @@ export function bootstrap(me) {
 
 /* ---------- people ---------- */
 
+/**
+ * Find people to start a conversation with.
+ *
+ * You can match on an email address — that is how you find someone whose
+ * address you already know — but the address is only returned for people you
+ * already have a relationship with. Otherwise any account could page through
+ * this endpoint and harvest every registered address.
+ */
 export function searchUsers(me, q) {
+  const db = handle();
   const needle = `%${String(q || '').trim().toLowerCase()}%`;
-  const rows = handle().prepare(`
+  const rows = db.prepare(`
     SELECT * FROM users
      WHERE id != ? AND retired = 0
        AND (LOWER(name) LIKE ? OR LOWER(IFNULL(email,'')) LIKE ? OR LOWER(IFNULL(role,'')) LIKE ?)
      ORDER BY name LIMIT 50`).all(me.id, needle, needle, needle);
-  return rows.map(publicUser);
+
+  const known = new Set(db.prepare(`
+    SELECT m2.user_id AS id FROM members m1
+      JOIN members m2 ON m2.convo_id = m1.convo_id
+     WHERE m1.user_id = ?
+    UNION SELECT contact_id AS id FROM contacts WHERE user_id = ?`).all(me.id, me.id).map((r) => r.id));
+
+  return rows.map((row) => {
+    const user = publicUser(row);
+    if (!row.is_bot && !known.has(row.id)) user.email = null;
+    return user;
+  });
 }
 
 /* ---------- conversations ---------- */
