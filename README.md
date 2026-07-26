@@ -96,15 +96,28 @@ Shared hosting with cPanel can run Relay through Passenger.
      Relay cannot run on that host — `node:sqlite` will not exist.
    - **Application root:** `relay`
    - **Application URL:** the domain or subdomain to serve it from
-   - **Application startup file:** `server/index.js`
+   - **Application startup file:** `app.js`
 3. Add environment variables in the same screen: `RELAY_SECURE=1`, plus any
    `RELAY_SMTP_*` values you need.
-4. Click **Run JS script** → `start`, or just start the application.
+4. Start the application.
 
-Passenger supplies `PORT` itself, and depending on the configuration that may be
-a TCP port *or* a Unix socket path — Relay accepts either. Passenger also
-proxies `/api/events` without buffering by default, so the live stream works
-without extra configuration.
+`app.js` at the repository root exists for exactly this: Passenger wants a
+single entry file at the application root, and this one reports a startup
+failure into the app's stderr log rather than leaving you with a bare 503.
+Locally, `node app.js` and `npm start` are equivalent.
+
+Passenger supplies `PORT` itself, and depending on the configuration that is a
+TCP port *or* a Unix socket path — Relay accepts either.
+
+**Then append `deploy/cpanel/htaccess-hardening.conf` to the `.htaccess` in your
+`public_html`.** Append, do not replace: cPanel writes its own
+`PassengerAppRoot` block into that file and removing it takes the site offline.
+The additions turn off response buffering so the live stream works, force
+HTTPS, raise the upload limit, and — most importantly — stop Apache serving
+application internals directly. If the app files sit inside the document root,
+Apache can hand out a file that physically exists there before Passenger ever
+sees the request, which would publish `data/relay.db` and every uploaded
+attachment to anyone who guesses the path.
 
 ### Upgrading
 
@@ -207,6 +220,8 @@ public/
   js/ui.js     chat UI: sidebar, messages, composer, search, settings
   js/settings.js, js/palette.js, js/util.js
 test/          server tests (node:test)
+deploy/        systemd unit, nginx config, backup script, cPanel .htaccess
+app.js         Passenger entry point for cPanel; `npm start` uses server/index.js
 ```
 
 **How sync works.** The client hydrates a full snapshot from `/api/bootstrap`,
