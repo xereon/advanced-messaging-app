@@ -69,7 +69,7 @@
     </header>
 
     <!-- Sign in -->
-    <form id="signin-form" class="auth-view" data-view="signin" novalidate>
+    <form id="signin-form" class="auth-view" data-view="signin" method="post" action="/api/auth/no-script" novalidate>
       <h2 class="auth-title">Sign in</h2>
       <div id="pin-unlock-slot"></div>
       <div class="field">
@@ -98,7 +98,7 @@
     </form>
 
     <!-- Sign up -->
-    <form id="signup-form" class="auth-view" data-view="signup" hidden novalidate>
+    <form id="signup-form" class="auth-view" data-view="signup" method="post" action="/api/auth/no-script" hidden novalidate>
       <h2 class="auth-title">Create your account</h2>
       <div class="field">
         <label for="signup-name">Full name</label>
@@ -126,7 +126,7 @@
     </form>
 
     <!-- Magic code -->
-    <form id="magic-form" class="auth-view" data-view="magic" hidden novalidate>
+    <form id="magic-form" class="auth-view" data-view="magic" method="post" action="/api/auth/no-script" hidden novalidate>
       <h2 class="auth-title">Sign in with an email code</h2>
       <div data-magic-step="1">
         <div class="field">
@@ -251,7 +251,7 @@
 
         <div id="attachment-tray" class="attachment-tray" role="list" aria-label="Files to send" hidden></div>
 
-        <form id="composer" class="composer">
+        <form id="composer" class="composer" method="post" action="/api/auth/no-script">
           <button type="button" class="btn icon-btn" id="btn-attach" title="Attach files" aria-label="Attach files"><svg class="icon" aria-hidden="true"><use href="#i-paperclip"/></svg></button>
           <input type="file" id="file-input" multiple hidden accept="image/*,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx">
           <button type="button" class="btn icon-btn" id="btn-emoji" title="Insert emoji" aria-label="Insert emoji" aria-haspopup="true" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-smile"/></svg></button>
@@ -482,7 +482,7 @@
     <h2 id="pin-dialog-title">Set a quick-unlock PIN</h2>
     <button class="btn icon-btn" data-close-dialog aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
   </header>
-  <form id="pin-form" class="dialog-body" novalidate>
+  <form id="pin-form" class="dialog-body" method="post" action="/api/auth/no-script" novalidate>
     <p class="hint">Use 4–6 digits. On this device you'll be able to unlock Relay with the PIN instead of your password.</p>
     <div class="field">
       <label for="pin-new">New PIN</label>
@@ -506,7 +506,7 @@
     <h2 id="password-dialog-title">Change password</h2>
     <button class="btn icon-btn" data-close-dialog aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
   </header>
-  <form id="password-form" class="dialog-body" novalidate>
+  <form id="password-form" class="dialog-body" method="post" action="/api/auth/no-script" novalidate>
     <div class="field">
       <label for="pw-current">Current password</label>
       <input id="pw-current" type="password" autocomplete="current-password">

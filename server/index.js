@@ -139,6 +139,51 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
+/* ---------- credential hygiene ---------- */
+
+/** Parameter names that must never appear in a URL. */
+const SECRET_PARAMS = ['password', 'pass', 'pwd', 'passwd', 'current', 'next', 'pin', 'code', 'token', 'secret'];
+
+const hasSecretInQuery = (url) => SECRET_PARAMS.some((k) => url.searchParams.has(k));
+
+/**
+ * A URL is the wrong place for a secret: it lands in history, access logs,
+ * bookmarks and Referer headers. If one ever arrives — a mis-built link, a
+ * form that lost its handler — bounce to the clean path immediately so the
+ * browser replaces the entry, and never read or log the value.
+ */
+function scrubCredentialUrl(res, url) {
+  const clean = new URL(url);
+  for (const k of SECRET_PARAMS) clean.searchParams.delete(k);
+  res.writeHead(303, {
+    Location: clean.pathname + (clean.search || '') + '#credentials-removed',
+    'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
+  });
+  res.end();
+}
+
+const NO_SCRIPT_PAGE = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JavaScript required — Relay</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         max-width: 32rem; margin: 4rem auto; padding: 0 1.5rem; line-height: 1.6;
+         color: #1a2334; background: #f2f4f9; }
+  a { color: #2458e6; }
+  .card { background: #fff; border: 1px solid #d7dde8; border-radius: 12px; padding: 1.5rem; }
+  h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
+</style></head>
+<body><div class="card">
+  <h1>JavaScript is required to sign in</h1>
+  <p>Relay sends your credentials in an encrypted request body rather than in the
+     page address, which needs JavaScript enabled.</p>
+  <p>Nothing you typed was stored or logged. Please enable JavaScript and
+     <a href="/">return to Relay</a>.</p>
+</div></body></html>`;
+
 /* ---------- routing ---------- */
 
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -150,9 +195,31 @@ async function handleApi(req, res, url) {
   const session = auth.sessionUser(cookies[auth.SESSION_COOKIE]);
   const me = session?.user || null;
 
+  // The no-JS fallback exists precisely because no script ran, so it cannot
+  // carry the client header. It reads nothing and answers with a static page.
+  if (path === '/auth/no-script') {
+    req.resume();   // drain the body without parsing or logging any of it
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(NO_SCRIPT_PAGE);
+  }
+
   // CSRF: state-changing calls must carry a header a cross-site form cannot set.
   if (!SAFE.has(method) && req.headers['x-relay-client'] !== '1') {
     return fail(res, 403, 'Missing client header.');
+  }
+
+  // Credentials never belong in a query string, on any endpoint.
+  if (hasSecretInQuery(url)) return scrubCredentialUrl(res, url);
+
+  // Auth responses carry session material; keep them out of every cache.
+  if (path.startsWith('/auth/') || path === '/me' || path.startsWith('/account/')) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
   }
 
   // File uploads keep their raw stream — reading it as JSON here would consume
@@ -450,18 +517,25 @@ export function createApp() {
   return createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'same-origin');
+    // no-referrer, not same-origin: nothing here needs a referrer, and it means
+    // a URL can never travel outward even if one somehow carries a secret.
+    res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
 
     try {
       if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
         return await handleApi(req, res, url);
       }
+      // A page load carrying credentials — from a stale bookmark or a form that
+      // lost its handler — is redirected before it can reach history or a log.
+      if (hasSecretInQuery(url)) return scrubCredentialUrl(res, url);
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'Method not allowed.');
       return await serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname);
     } catch (err) {
       const status = err.status || 500;
-      if (status >= 500) console.error('[relay]', err);
+      // Log the path only. err may carry the full URL, and a query string can
+      // hold exactly what we are trying to keep out of the logs.
+      if (status >= 500) console.error(`[relay] ${req.method} ${url.pathname}:`, err.message);
       if (!res.headersSent) fail(res, status, status >= 500 ? 'Something went wrong.' : err.message);
     }
   });

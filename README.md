@@ -20,7 +20,7 @@ Then open <http://localhost:8130>. The database is created automatically at
 `data/relay.db`.
 
 ```bash
-npm test    # 80 tests: auth, WebAuthn, authorization, messaging, files
+npm test    # 97 tests: auth, WebAuthn, URL safety, authorization, messaging, files
 npm run dev # restarts on change
 ```
 
@@ -102,6 +102,17 @@ long outage the client pulls a fresh snapshot instead.
 - Login, PIN, sign-up and code requests are rate limited per address and per
   account. Sign-in returns the same message and does comparable work whether or
   not the address is registered.
+- **Credentials never touch a URL.** Every form carrying a secret is explicitly
+  `method="post"`, so even with JavaScript disabled or broken the browser cannot
+  fall back to a GET that would write `?password=` into the address bar, browser
+  history, server logs and `Referer` headers. Those forms target a no-JS
+  fallback page that drains the request without parsing, storing or echoing
+  anything. If a secret-shaped parameter reaches any URL anyway — a stale
+  bookmark, a mis-built link — the server answers `303` to the cleaned path
+  before the value can be read or logged, keeping harmless parameters intact.
+  Auth responses send `Cache-Control: no-store`, the whole app sends
+  `Referrer-Policy: no-referrer`, and the 500 handler logs the path only, never
+  the query string.
 
 ## Sign-in options
 
