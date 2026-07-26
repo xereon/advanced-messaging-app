@@ -90,9 +90,23 @@ export function seedConversationsFor(userId, displayName) {
   }
 }
 
-function replyText(bot, userText) {
-  for (const rule of RULES) if (rule.re.test(userText)) return pick(rule.pool);
-  return Math.random() < 0.3 ? pick(bot.flavor) : pick(GENERIC);
+function replyText(bot, userText, avoid) {
+  const choose = () => {
+    for (const rule of RULES) if (rule.re.test(userText)) return pick(rule.pool);
+    return Math.random() < 0.3 ? pick(bot.flavor) : pick(GENERIC);
+  };
+  // The pools are small, so the same line comes up often enough to look like a
+  // duplicated message. Take one more swing at it before repeating ourselves.
+  let text = choose();
+  for (let i = 0; i < 4 && text === avoid; i++) text = choose();
+  return text;
+}
+
+/** The last thing this bot said here, so it does not say it twice in a row. */
+function lastSaid(convoId, botId) {
+  return handle().prepare(
+    'SELECT text FROM messages WHERE convo_id = ? AND from_id = ? ORDER BY seq DESC LIMIT 1',
+  ).get(convoId, botId)?.text || null;
 }
 
 const timers = new Set();
@@ -137,7 +151,7 @@ export function scheduleBotReply(convoId, msg) {
 
   const responder = BOTS.find((b) => b.id === pick(botIds));
   if (!responder) return;
-  const text = replyText(responder, msg.text);
+  const text = replyText(responder, msg.text, lastSaid(convoId, responder.id));
   const typeMs = Math.min(1200 + text.length * 30, 3800);
 
   later(900, () => rt.publish(audience.filter((u) => u !== responder.id), 'typing',

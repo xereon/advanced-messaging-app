@@ -123,11 +123,24 @@ export async function loadOlder(convoId) {
   return fresh.length;
 }
 
+/**
+ * Insert or update a message.
+ *
+ * Returns `replacedId` when this message took the place of an optimistic row.
+ * Callers need that: the rendered bubble still carries the temporary id, so it
+ * has to be replaced in place. Treating it as a fresh arrival would append a
+ * second bubble and leave the pending one behind — the message would look like
+ * it had been sent twice.
+ */
 function upsertMessage(msg, clientId) {
   const list = messages.get(msg.convoId) || [];
+  let replacedId = null;
+
   // Reconcile an optimistic row first, then fall back to matching by id.
   let i = clientId ? list.findIndex((m) => m.id === clientId) : -1;
+  if (i !== -1) replacedId = clientId;
   if (i === -1) i = list.findIndex((m) => m.id === msg.id);
+
   if (i === -1) {
     list.push(msg);
     list.sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0));
@@ -135,7 +148,7 @@ function upsertMessage(msg, clientId) {
     list[i] = { ...list[i], ...msg, pending: false, failed: false };
   }
   messages.set(msg.convoId, list);
-  return msg;
+  return { msg, replacedId };
 }
 
 /** Optimistically shows the message, then sends it. */
@@ -156,8 +169,8 @@ export async function appendMessage(convoId, draft) {
       text: draft.text, replyTo: draft.replyTo, clientId,
       attachmentIds: (draft.attachments || []).map((a) => a.id),
     });
-    upsertMessage(message, clientId);
-    emit('message-updated', { convoId, msg: message });
+    const { replacedId } = upsertMessage(message, clientId);
+    emit('message-updated', { convoId, msg: message, previousId: replacedId });
     return message;
   } catch (err) {
     const idx = list.findIndex((m) => m.id === clientId);
@@ -292,9 +305,14 @@ export function connect() {
       // behind; pull a fresh one rather than dropping it.
       if (!convos.has(message.convoId)) { resync().catch(() => {}); return; }
       const existing = messagesOf(message.convoId).some((m) => m.id === message.id);
-      upsertMessage(message, clientId);
-      if (existing) emit('message-updated', { convoId: message.convoId, msg: message });
-      else emit('message', { convoId: message.convoId, msg: message });
+      const { replacedId } = upsertMessage(message, clientId);
+      // The echo can outrun the send's own response. When it does it is still
+      // our pending message coming home, not a new one.
+      if (existing || replacedId) {
+        emit('message-updated', { convoId: message.convoId, msg: message, previousId: replacedId });
+      } else {
+        emit('message', { convoId: message.convoId, msg: message });
+      }
     },
     'message-updated': ({ message }) => {
       upsertMessage(message);

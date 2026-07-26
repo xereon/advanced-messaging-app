@@ -507,11 +507,22 @@ function closeConvoToList() {
   renderSidebar();
 }
 
-/** Replace a single message node in place, rather than rebuilding the list. */
-function patchMessageNode(msg) {
+/**
+ * Replace a single message node in place, rather than rebuilding the list.
+ *
+ * `previousId` is set when a pending message has just been confirmed: the node
+ * on screen still carries the temporary id, so that is what has to be found.
+ */
+function patchMessageNode(msg, previousId) {
   const wrap = $('#messages');
-  const existing = wrap.querySelector(`[data-msg-id="${CSS.escape(msg.id)}"]`);
+  const existing = wrap.querySelector(`[data-msg-id="${CSS.escape(previousId || msg.id)}"]`);
   if (!existing) return false;
+  // If both the pending node and a confirmed node somehow exist, drop the
+  // stale one rather than leaving the message on screen twice.
+  if (previousId) {
+    const confirmed = wrap.querySelector(`[data-msg-id="${CSS.escape(msg.id)}"]`);
+    if (confirmed && confirmed !== existing) existing.remove();
+  }
   const convo = db.getConvo(activeConvoId);
   if (!convo) return false;
   const list = visibleMessages(convo);
@@ -535,6 +546,12 @@ function appendMessageNode(msg) {
   const convo = db.getConvo(activeConvoId);
   if (!convo || wrap.querySelector(`[data-msg-id="${CSS.escape(msg.id)}"]`)) return false;
   const list = visibleMessages(convo);
+  // Belt and braces: a rendered node whose message is no longer in the cache is
+  // an orphan left by a reconciliation, and would read as a duplicate.
+  const live = new Set(list.map((m) => m.id));
+  for (const node of wrap.querySelectorAll('.msg[data-msg-id]')) {
+    if (!live.has(node.dataset.msgId)) node.remove();
+  }
   if (list[list.length - 1]?.id !== msg.id) return false;   // out of order: full render
   if (!wrap.querySelector('.msg')) return false;            // empty state present
 
@@ -1785,10 +1802,10 @@ function handleIncoming(convoId, msg) {
 
 function wireStoreEvents() {
   db.on('message', ({ convoId, msg }) => handleIncoming(convoId, msg));
-  db.on('message-updated', ({ convoId, msg }) => {
+  db.on('message-updated', ({ convoId, msg, previousId }) => {
     // One node changed; only fall back to a full render if it is not on screen
     // in a shape we can patch.
-    if (convoId === activeConvoId && !patchMessageNode(msg)) renderMessages();
+    if (convoId === activeConvoId && !patchMessageNode(msg, previousId)) renderMessages();
     renderSidebar();
   });
   db.on('reads', ({ convoId }) => {
