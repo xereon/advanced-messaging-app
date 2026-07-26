@@ -8,36 +8,154 @@ the back end is Node's own `node:http`, `node:sqlite` and `node:crypto`.
 ![no dependencies](https://img.shields.io/badge/dependencies-none-2458E6)
 ![node 22+](https://img.shields.io/badge/node-22.5%2B-4D7C0F)
 
-## Running it
+## Installation
 
-Requires **Node 22.5 or newer** (for the built-in SQLite module).
+Relay has **no dependencies to install** — no `npm install`, no build step, no
+database server. Clone it and start it.
+
+### Requirements
+
+| | |
+| --- | --- |
+| **Node.js 22.5 or newer** | The only requirement. Node's built-in SQLite (`node:sqlite`) landed in 22.5.0, which is what lets the project ship with zero dependencies. Older versions are refused at startup with a message saying so. |
+| Disk | A few MB, plus whatever attachments accumulate (capped at 10 MB each). |
+| Everything else | Nothing. No Redis, no Postgres, no reverse proxy for local use. |
 
 ```bash
+node --version     # must be v22.5.0 or higher
+```
+
+If it is older, install a current Node — [nodejs.org/en/download](https://nodejs.org/en/download),
+or with [nvm](https://github.com/nvm-sh/nvm): `nvm install 22 && nvm use 22`.
+
+### Local install
+
+```bash
+git clone https://github.com/xereon/advanced-messaging-app.git
+cd advanced-messaging-app
 npm start
 ```
 
-Then open <http://localhost:8130>. The database is created automatically at
-`data/relay.db`.
+Open <http://localhost:8130> and create an account. That is the whole process.
+
+The database and upload directory are created on first run under `data/`, which
+is git-ignored. A new account is seeded with a few conversations so the app is
+not empty on first sight.
 
 ```bash
-npm test    # 97 tests: auth, WebAuthn, URL safety, authorization, messaging, files
-npm run dev # restarts on change
+npm test     # 97 tests
+npm run dev  # restarts on file changes
+PORT=3000 npm start
 ```
+
+**Two accounts on one machine.** A browser keeps one cookie jar per profile, so
+signing in twice in two tabs replaces the first session. Use a private window,
+a second browser, or a second device to see two people messaging.
+
+### Deploying to a server
+
+Relay listens on plain HTTP and expects TLS to be terminated in front of it.
+
+```bash
+sudo useradd --system --home /srv/relay --shell /usr/sbin/nologin relay
+sudo git clone https://github.com/xereon/advanced-messaging-app.git /srv/relay
+sudo chown -R relay:relay /srv/relay
+
+sudo cp /srv/relay/deploy/relay.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now relay
+journalctl -u relay -f
+```
+
+Then put nginx in front:
+
+```bash
+sudo cp /srv/relay/deploy/nginx.conf /etc/nginx/sites-available/relay
+sudo ln -s /etc/nginx/sites-available/relay /etc/nginx/sites-enabled/
+# edit server_name and the certificate paths, then
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d relay.example.com
+```
+
+Set **`RELAY_SECURE=1`** once TLS is in place (the supplied unit file already
+does) so the session cookie is marked `Secure`.
+
+> **The one thing that catches people out:** the live stream is a long-lived
+> Server-Sent Events response. If the proxy buffers it, the app loads perfectly
+> and then never updates. The supplied nginx config disables buffering for
+> `/api/events`; if you use a different proxy, do the equivalent there.
+
+### Deploying on cPanel (Node.js Selector / Passenger)
+
+Shared hosting with cPanel can run Relay through Passenger.
+
+1. Upload or `git clone` the repository into a directory outside `public_html`,
+   for example `~/relay`.
+2. **Setup Node.js App** → *Create Application*:
+   - **Node.js version:** 22.5 or newer. If the list stops short of that,
+     Relay cannot run on that host — `node:sqlite` will not exist.
+   - **Application root:** `relay`
+   - **Application URL:** the domain or subdomain to serve it from
+   - **Application startup file:** `server/index.js`
+3. Add environment variables in the same screen: `RELAY_SECURE=1`, plus any
+   `RELAY_SMTP_*` values you need.
+4. Click **Run JS script** → `start`, or just start the application.
+
+Passenger supplies `PORT` itself, and depending on the configuration that may be
+a TCP port *or* a Unix socket path — Relay accepts either. Passenger also
+proxies `/api/events` without buffering by default, so the live stream works
+without extra configuration.
+
+### Upgrading
+
+```bash
+cd /srv/relay
+sudo -u relay git pull
+sudo systemctl restart relay
+```
+
+The schema migrates itself on start (`CREATE TABLE IF NOT EXISTS`), so no
+migration step is needed. Take a backup first anyway.
+
+### Backups
+
+Two things matter: `data/relay.db` and `data/uploads/`.
+
+```bash
+./deploy/backup.sh /var/backups/relay
+```
+
+The script takes a **consistent snapshot of the running database** with
+`VACUUM INTO` and tars the attachments, keeping the last 14 sets. Copying
+`relay.db` by hand while the server is running can capture a torn write,
+because SQLite is in WAL mode — use the script, or stop the service first.
+
+Restoring is a file copy:
+
+```bash
+sudo systemctl stop relay
+sudo -u relay cp /var/backups/relay/relay-YYYYMMDD-HHMMSS.db /srv/relay/data/relay.db
+sudo -u relay tar -xzf /var/backups/relay/uploads-YYYYMMDD-HHMMSS.tar.gz -C /srv/relay/data
+sudo systemctl start relay
+```
+
+Schedule it with cron: `15 3 * * * /srv/relay/deploy/backup.sh /var/backups/relay`
 
 ### Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `8130` | HTTP port |
+| `PORT` | `8130` | TCP port, or a Unix socket path under Passenger |
 | `RELAY_DB` | `data/relay.db` | SQLite database path |
 | `RELAY_UPLOADS` | `data/uploads` | Where attachments are stored |
 | `RELAY_SECURE` | unset | Set to `1` behind HTTPS to add `Secure` to the session cookie |
 | `RELAY_ORIGIN` | unset | Extra allowed WebAuthn origin, if the public origin differs from `Host` |
 | `RELAY_RATE_LIMIT` | on | Set to `off` to disable rate limiting (tests only) |
 
-### Email delivery
+#### Email delivery
 
-Login codes are emailed when SMTP is configured, and shown on screen otherwise.
+Login codes are emailed when SMTP is configured, and shown on screen otherwise —
+so the app works out of the box and gets real delivery when you want it.
 
 | Variable | Purpose |
 | --- | --- |
@@ -52,9 +170,20 @@ The client refuses to send credentials to a server that will not negotiate
 STARTTLS unless you explicitly opt in. Once SMTP is configured the code is never
 returned in the HTTP response — only a masked address confirming where it went.
 
-**Deploying:** put it behind a TLS-terminating reverse proxy, set
-`RELAY_SECURE=1`, and make sure the proxy does not buffer `text/event-stream`
-(nginx: `proxy_buffering off`) or live updates will stall.
+Keep `RELAY_SMTP_PASS` out of the unit file; use `EnvironmentFile=` pointing at
+a root-owned `0600` file instead.
+
+### Troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| `Relay needs Node 22.5 or newer` | Exactly that. Check `node --version`; a service may use a different Node than your shell. |
+| `Cannot find module 'node:sqlite'` | Node older than 22.5 slipped past the check — confirm which binary systemd or Passenger is running. |
+| App loads but messages never arrive | The proxy is buffering `/api/events`. See the note above. |
+| Signed out on every reload | `RELAY_SECURE=1` while serving over plain HTTP: the browser drops a `Secure` cookie on an insecure origin. |
+| Passkeys unavailable | WebAuthn needs a secure context. `localhost` counts; a bare IP or plain-HTTP domain does not. |
+| `EADDRINUSE` | Something already holds the port. `PORT=8131 npm start`, or stop the other process. |
+| Uploads fail at ~10 MB | The app's own cap. A proxy `client_max_body_size` below that fails earlier and less clearly. |
 
 ## Architecture
 

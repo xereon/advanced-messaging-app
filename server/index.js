@@ -1,6 +1,10 @@
 // index.js — HTTP server: static files, JSON API, SSE stream.
 // No framework; node:http plus the modules in this folder.
 
+// Must come first: ESM evaluates dependencies in declaration order, so this
+// runs before db.js reaches for node:sqlite on a Node that lacks it.
+import './preflight.js';
+
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
@@ -18,7 +22,11 @@ import { seedBots, seedConversationsFor, cancelBotTimers } from './bots.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PUBLIC_DIR = join(ROOT, 'public');
-const PORT = Number(process.env.PORT || 8130);
+// Passenger (cPanel's Node.js Selector) supplies PORT, and depending on the
+// configuration that may be a TCP port or a Unix socket path. Number() on a
+// socket path yields NaN, which would silently bind a random port instead.
+const RAW_PORT = process.env.PORT || '8130';
+const PORT = /^\d+$/.test(RAW_PORT) ? Number(RAW_PORT) : RAW_PORT;
 const DB_FILE = process.env.RELAY_DB || join(ROOT, 'data', 'relay.db');
 const UPLOAD_DIR = process.env.RELAY_UPLOADS || join(ROOT, 'data', 'uploads');
 const SECURE_COOKIES = process.env.RELAY_SECURE === '1';
@@ -551,7 +559,8 @@ export async function start({ port = PORT, dbFile = DB_FILE, uploadDir = UPLOAD_
   sweeper.unref?.();
   const server = createApp();
   server.listen(port, () => {
-    console.log(`Relay server listening on http://localhost:${port}`);
+    const where = typeof port === 'number' ? `http://localhost:${port}` : port;
+    console.log(`Relay server listening on ${where}`);
     console.log(`Database: ${dbFile}`);
   });
 

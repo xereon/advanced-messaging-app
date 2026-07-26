@@ -1,0 +1,56 @@
+# systemd unit for Relay on a VPS or dedicated host.
+#
+#   sudo cp deploy/relay.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now relay
+#   journalctl -u relay -f
+#
+# Adjust User, WorkingDirectory and the ExecStart path to match your install.
+
+[Unit]
+Description=Relay messaging server
+Documentation=https://github.com/xereon/advanced-messaging-app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=relay
+Group=relay
+WorkingDirectory=/srv/relay
+ExecStart=/usr/bin/node server/index.js
+
+# Listen only on loopback; the reverse proxy terminates TLS and faces the world.
+Environment=PORT=8130
+Environment=NODE_ENV=production
+# Required once TLS is in front, so the session cookie is marked Secure.
+Environment=RELAY_SECURE=1
+# Uncomment to send login codes by email instead of showing them on screen.
+#Environment=RELAY_SMTP_HOST=smtp.example.com
+#Environment=RELAY_SMTP_PORT=587
+#Environment=RELAY_SMTP_USER=relay@example.com
+#Environment=RELAY_SMTP_FROM=Relay <no-reply@example.com>
+# Keep the password out of this file — see EnvironmentFile below.
+#EnvironmentFile=/etc/relay/secrets.env
+
+Restart=on-failure
+RestartSec=5s
+
+# Hardening. The service needs to write only its own data directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/relay/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target
