@@ -29,8 +29,18 @@ jobs:
 
       - name: Verify no secrets or database files are committed
         run: |
-          if git ls-files | grep -E '(^|/)(data/|.*\.db$)'; then
+          if git ls-files | grep -E '(^|/)(data/|.*\.db$|.*\.db-wal$|.*\.db-shm$)'; then
             echo "database or upload artifacts are tracked" >&2
+            exit 1
+          fi
+
+      # An archive is opaque to the check above, and a local snapshot of this
+      # project bundles data/ — the live database and every attachment. One was
+      # committed this way once; never again.
+      - name: Verify no archives are committed
+        run: |
+          if git ls-files | grep -iE '\.(zip|tar|tar\.gz|tgz|7z|rar)$'; then
+            echo "an archive is tracked; it may contain the database" >&2
             exit 1
           fi
 
