@@ -155,6 +155,156 @@ const STATUS_META = {
   read: { icon: 'i-check-double', label: 'Read' },
 };
 
+/* ================= profiles ================= */
+
+/** Someone's local time, when they have published a zone. */
+function localTimeIn(timezone, use24h) {
+  if (!timezone) return null;
+  try {
+    return new Intl.DateTimeFormat([], {
+      timeZone: timezone, hour: 'numeric', minute: '2-digit', hour12: !use24h,
+    }).format(new Date());
+  } catch {
+    return null;   // a zone this browser does not recognise
+  }
+}
+
+function statusLabel(user) {
+  if (!user?.statusText && !user?.statusEmoji) return '';
+  return `${user.statusEmoji || ''} ${user.statusText || ''}`.trim();
+}
+
+let profileUserId = null;
+
+/** Open the profile card for anyone, including yourself. */
+export async function openProfile(userId) {
+  if (!userId) return;
+  profileUserId = userId;
+  const dlg = $('#profile-dialog');
+
+  // Paint from cache first so the card is never empty while the request runs.
+  const cached = db.getUser(userId);
+  if (cached) paintProfile({ user: cached, isSelf: userId === me.id, isContact: db.isContact(me.id, userId),
+    online: db.isOnline(cached), sharedConversations: [], directConversationId: null }, { partial: true });
+  if (!dlg.open) dlg.showModal();
+
+  try {
+    const profile = await db.fetchProfile(userId);
+    if (profileUserId !== userId) return;          // a different profile was opened
+    paintProfile(profile, { partial: false });
+  } catch (err) {
+    toast(err.message, 'error');
+    dlg.close();
+  }
+}
+
+function paintProfile(profile, { partial }) {
+  const { user, isSelf, isContact, online, sharedConversations, directConversationId } = profile;
+  const s = getSettings();
+
+  const av = $('#profile-avatar');
+  av.style.setProperty('--av-bg', user.avatarColor || '#334155');
+  av.textContent = initials(user.name);
+
+  $('#profile-name').textContent = user.name;
+  $('#profile-dialog-heading').textContent = isSelf ? 'Your profile' : 'Profile';
+
+  const meta = [user.pronouns, user.title || (user.isBot ? user.role : null)].filter(Boolean);
+  if (user.isGuest) meta.push('Guest');
+  if (user.retired) meta.push('Former guest');
+  $('#profile-meta').textContent = meta.join(' · ');
+
+  const status = statusLabel(user);
+  const statusEl = $('#profile-status');
+  statusEl.hidden = !status;
+  statusEl.textContent = status;
+
+  const bio = $('#profile-bio');
+  bio.hidden = !user.bio;
+  bio.textContent = user.bio || '';
+
+  // Facts list — only rows we actually have something for.
+  const facts = [];
+  facts.push(['Availability', user.isBot ? 'Always online' : (online ? 'Online now' : lastSeenLabel(user))]);
+  const theirTime = localTimeIn(user.timezone, s.use24h);
+  if (theirTime) facts.push(['Local time', `${theirTime} · ${user.timezone.replace(/_/g, ' ')}`]);
+  if (user.email) facts.push(['Email', user.email]);
+  if (user.createdAt) facts.push(['Joined', fmtDay(user.createdAt)]);
+
+  const dl = $('#profile-facts');
+  dl.innerHTML = '';
+  for (const [term, value] of facts) {
+    const dt = document.createElement('dt');
+    dt.textContent = term;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    dl.append(dt, dd);
+  }
+
+  // Shared conversations, once the server has answered.
+  const sharedWrap = $('#profile-shared');
+  sharedWrap.innerHTML = '';
+  const groups = (sharedConversations || []).filter((c) => c.type === 'group');
+  if (!partial && groups.length) {
+    const h = document.createElement('h4');
+    h.className = 'profile-subhead';
+    h.textContent = groups.length === 1 ? 'One group in common' : `${groups.length} groups in common`;
+    sharedWrap.append(h);
+    const ul = document.createElement('ul');
+    ul.className = 'profile-shared-list';
+    for (const g of groups) {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'link-btn';
+      btn.textContent = g.title || 'Group';
+      btn.addEventListener('click', () => { $('#profile-dialog').close(); openConvo(g.id); });
+      li.append(btn);
+      ul.append(li);
+    }
+    sharedWrap.append(ul);
+  }
+
+  // Actions
+  const contactBtn = $('#profile-contact-btn');
+  const messageBtn = $('#profile-message-btn');
+  contactBtn.hidden = isSelf || user.retired;
+  messageBtn.hidden = isSelf || user.retired;
+  if (!isSelf) {
+    contactBtn.textContent = isContact ? 'Remove from contacts' : 'Add to contacts';
+    contactBtn.onclick = () => {
+      if (db.isContact(me.id, user.id)) db.removeContact(me.id, user.id);
+      else db.addContact(me.id, user.id);
+      contactBtn.textContent = db.isContact(me.id, user.id) ? 'Remove from contacts' : 'Add to contacts';
+    };
+    messageBtn.onclick = async () => {
+      $('#profile-dialog').close();
+      try {
+        const convo = directConversationId
+          ? db.getConvo(directConversationId) || await db.ensureDm(me.id, user.id)
+          : await db.ensureDm(me.id, user.id);
+        renderSidebar();
+        openConvo(convo.id);
+      } catch (err) { toast(err.message, 'error'); }
+    };
+  }
+  if (isSelf) {
+    contactBtn.hidden = false;
+    contactBtn.textContent = 'Edit profile';
+    contactBtn.onclick = () => { $('#profile-dialog').close(); openSettings('profile'); };
+  }
+}
+
+function lastSeenLabel(user) {
+  if (!user.lastSeen) return 'Offline';
+  const mins = Math.round((Date.now() - user.lastSeen) / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `Last seen ${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `Last seen ${hours} hour${hours === 1 ? '' : 's'} ago`;
+  return `Last seen ${fmtDay(user.lastSeen)}`;
+}
+
 /* ================= people search ================= */
 
 /** Everyone you could start a conversation with: colleagues, bots and any
@@ -166,9 +316,14 @@ function directoryPeople() {
 function personSubtitle(person) {
   if (person.retired) return 'Former guest';
   const presence = db.isOnline(person) ? 'Online' : 'Offline';
-  if (person.isBot) return `${person.role} · ${presence}`;
-  if (person.isGuest) return `Guest · ${presence}`;
-  return person.role ? `${person.role} · ${presence}` : presence;
+  const status = statusLabel(person);
+  const role = person.title || person.role;
+  const parts = person.isBot
+    ? [role, presence]
+    : person.isGuest ? ['Guest', presence] : [role, presence];
+  // A status the person set themselves is more useful than their job title.
+  if (status) parts.unshift(status);
+  return parts.filter(Boolean).join(' · ');
 }
 
 /** The add/remove-contact toggle that sits beside a person anywhere they
@@ -642,6 +797,21 @@ function renderConvoHeader() {
   av.style.setProperty('--av-bg', view.color || '#334155');
   av.textContent = initials(view.title);
   $('#convo-title').textContent = view.title;
+
+  // Only a direct conversation has a person behind it to open.
+  const openable = !!view.other;
+  for (const el of [av, $('#convo-title')]) {
+    el.classList.toggle('opens-profile', openable);
+    if (openable) {
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
+      el.setAttribute('aria-label', `${view.title} — open profile`);
+    } else {
+      el.removeAttribute('role');
+      el.removeAttribute('tabindex');
+      el.removeAttribute('aria-label');
+    }
+  }
 
   const sub = $('#convo-subtitle');
   sub.innerHTML = '';
@@ -1420,8 +1590,10 @@ function buildAvatarColors() {
     b.setAttribute('aria-checked', String(me.avatarColor === color));
     b.setAttribute('aria-label', `Avatar colour ${color}`);
     b.addEventListener('click', () => {
-      db.updateProfile({ avatarColor: color }).then(() => {
+      db.updateProfile({ avatarColor: color }).then((updated) => {
+        me = { ...me, ...updated };
         buildAvatarColors();
+        renderOwnPreview();
         renderMe();
         renderSidebar();
       }).catch((err) => toast(err.message, 'error'));
@@ -1442,7 +1614,7 @@ function syncSettingsInputs() {
   $('#out-letter-spacing').textContent = `${s.letterSpacing}em`;
   buildThemeGrid();
   buildAvatarColors();
-  $('#set-display-name').value = me.name;
+  fillProfileForm();
   $('#pin-status').textContent = me.hasPin ? 'Enabled for this account' : 'Not set';
   $('#btn-set-pin').textContent = me.hasPin ? 'Change PIN' : 'Set PIN';
   renderPasskeys();
@@ -1493,6 +1665,154 @@ async function renderPasskeys() {
   }
 }
 
+const PROFILE_FIELDS = {
+  '#set-display-name': 'name',
+  '#set-pronouns': 'pronouns',
+  '#set-title': 'title',
+  '#set-bio': 'bio',
+  '#set-status-emoji': 'statusEmoji',
+  '#set-status-text': 'statusText',
+  '#set-timezone': 'timezone',
+};
+
+function fillProfileForm() {
+  $('#set-display-name').value = me.name || '';
+  $('#set-pronouns').value = me.pronouns || '';
+  $('#set-title').value = me.title || '';
+  $('#set-bio').value = me.bio || '';
+  $('#set-status-emoji').value = me.statusEmoji || '';
+  $('#set-status-text').value = me.statusText || '';
+  $('#set-timezone').value = me.timezone || '';
+  updateBioCount();
+  updateTzPreview();
+  renderOwnPreview();
+}
+
+function updateBioCount() {
+  $('#bio-remaining').textContent = String(280 - $('#set-bio').value.length);
+}
+
+function updateTzPreview() {
+  const tz = $('#set-timezone').value.trim();
+  const el = $('#tz-preview');
+  if (!tz) { el.textContent = 'Not set — no local time is shown on your profile.'; return; }
+  const now = localTimeIn(tz, getSettings().use24h);
+  el.textContent = now ? `It is ${now} there right now.` : 'That time zone is not recognised.';
+}
+
+/** Live preview of the card other people will see. */
+function renderOwnPreview() {
+  const av = $('#own-avatar');
+  av.style.setProperty('--av-bg', me.avatarColor || '#334155');
+  av.textContent = initials($('#set-display-name').value || me.name);
+  $('#own-preview-name').textContent = $('#set-display-name').value || me.name;
+  const meta = [$('#set-pronouns').value.trim(), $('#set-title').value.trim()].filter(Boolean);
+  $('#own-preview-meta').textContent = meta.join(' · ');
+  const status = `${$('#set-status-emoji').value.trim()} ${$('#set-status-text').value.trim()}`.trim();
+  $('#own-preview-status').textContent = status;
+}
+
+function statusExpiryFromChoice() {
+  const choice = $('#set-status-until').value;
+  if (!choice) return null;
+  if (choice === 'today') {
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    return end.getTime();
+  }
+  return Date.now() + Number(choice) * 60000;
+}
+
+async function saveProfile() {
+  const btn = $('#btn-save-profile');
+  hideErr('#profile-error');
+  btn.disabled = true;
+  $('#profile-saved').textContent = '';
+  try {
+    const statusText = $('#set-status-text').value.trim();
+    const updated = await db.updateProfile({
+      name: $('#set-display-name').value,
+      pronouns: $('#set-pronouns').value,
+      title: $('#set-title').value,
+      bio: $('#set-bio').value,
+      statusEmoji: $('#set-status-emoji').value,
+      statusText,
+      statusUntil: statusText ? statusExpiryFromChoice() : null,
+      timezone: $('#set-timezone').value.trim() || null,
+    });
+    me = { ...me, ...updated };
+    fillProfileForm();
+    renderMe();
+    renderSidebar();
+    if (activeConvoId) renderConvoHeader();
+    $('#profile-saved').textContent = 'Saved';
+    setTimeout(() => { $('#profile-saved').textContent = ''; }, 2500);
+  } catch (err) {
+    showErr('#profile-error', err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** Every route into a profile: the header, message avatars, your own avatar. */
+function wireProfileOpeners() {
+  // Conversation header — only meaningful for a direct conversation.
+  const openHeaderProfile = () => {
+    const convo = db.getConvo(activeConvoId);
+    const other = convo && convoView(convo).other;
+    if (other) openProfile(other.id);
+  };
+  for (const el of [$('#convo-avatar'), $('#convo-title')]) {
+    el.addEventListener('click', openHeaderProfile);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openHeaderProfile(); }
+    });
+  }
+
+  // An avatar beside a message opens its author.
+  $('#messages').addEventListener('click', (e) => {
+    const av = e.target.closest('.avatar');
+    if (!av) return;
+    const msg = av.closest('.msg');
+    if (!msg) return;
+    const record = db.messagesOf(activeConvoId).find((m) => m.id === msg.dataset.msgId);
+    if (record) openProfile(record.from);
+  });
+
+  // Your own profile from the account menu.
+  $('#user-menu').addEventListener('click', (e) => {
+    if (e.target.closest('[data-action="profile"]')) openProfile(me.id);
+  });
+
+  for (const btn of $$('[data-close-dialog]')) {
+    btn.addEventListener('click', () => btn.closest('dialog')?.close());
+  }
+}
+
+function wireProfilePanel() {
+  for (const sel of Object.keys(PROFILE_FIELDS)) {
+    $(sel).addEventListener('input', () => {
+      renderOwnPreview();
+      if (sel === '#set-bio') updateBioCount();
+      if (sel === '#set-timezone') updateTzPreview();
+    });
+  }
+  $('#btn-save-profile').addEventListener('click', saveProfile);
+  $('#btn-detect-tz').addEventListener('click', () => {
+    const guess = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!guess) return toast('This browser will not report a time zone.', 'error');
+    $('#set-timezone').value = guess;
+    updateTzPreview();
+  });
+  $('#btn-clear-status').addEventListener('click', async () => {
+    $('#set-status-emoji').value = '';
+    $('#set-status-text').value = '';
+    $('#set-status-until').value = '';
+    renderOwnPreview();
+    await saveProfile();
+  });
+}
+
 function refreshStorageUsage() {
   const convos = db.convosFor().length;
   const msgs = db.convosFor().reduce((n, c) => n + db.messagesOf(c.id).length, 0);
@@ -1538,19 +1858,6 @@ function wireSettings() {
       if (key === 'use24h' || key === 'typingIndicators') { renderSidebar(); if (activeConvoId) renderMessages(); renderTyping(); }
     });
   }
-
-  $('#set-display-name').addEventListener('change', () => {
-    const v = $('#set-display-name').value.trim();
-    if (!v) { $('#set-display-name').value = me.name; return; }
-    db.updateProfile({ name: v }).then(() => {
-      renderMe();
-      renderSidebar();
-      toast('Display name updated', 'success');
-    }).catch((err) => {
-      $('#set-display-name').value = me.name;
-      toast(err.message, 'error');
-    });
-  });
 
   // PIN
   $('#btn-set-pin').addEventListener('click', () => {
@@ -2155,6 +2462,8 @@ export function initUI(user, { onSignOut } = {}) {
   wireConvoPane();
   wireSettings();
   wireNewChat();
+  wireProfilePanel();
+  wireProfileOpeners();
   wireStoreEvents();
   wireShortcuts();
   wireMessageKeys();

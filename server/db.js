@@ -169,6 +169,27 @@ function migrate() {
     );
     INSERT OR IGNORE INTO counters(name, value) VALUES ('seq', 0);
   `);
+
+  // CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+  // columns added after the first release need their own step.
+  addColumns('users', {
+    pronouns: 'TEXT',
+    title: 'TEXT',
+    bio: 'TEXT',
+    status_emoji: 'TEXT',
+    status_text: 'TEXT',
+    status_until: 'INTEGER',
+    timezone: 'TEXT',
+    updated_at: 'INTEGER',
+  });
+}
+
+/** Add any of `columns` that the table does not already have. */
+function addColumns(table, columns) {
+  const present = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+  for (const [name, type] of Object.entries(columns)) {
+    if (!present.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
 }
 
 /** Next global sequence number. Callers must already be inside a transaction
@@ -200,6 +221,9 @@ export function tx(fn) {
 /** Public view of a user — never leaks password or PIN material. */
 export function publicUser(row) {
   if (!row) return null;
+  // A status is allowed to expire on its own, so a stale one is simply not
+  // reported rather than needing a sweep.
+  const statusLive = !row.status_until || row.status_until > Date.now();
   return {
     id: row.id,
     name: row.name,
@@ -212,6 +236,13 @@ export function publicUser(row) {
     createdAt: row.created_at,
     lastSeen: row.last_seen,
     hasPin: !!row.pin_hash,
+    pronouns: row.pronouns || null,
+    title: row.title || null,
+    bio: row.bio || null,
+    timezone: row.timezone || null,
+    statusEmoji: statusLive ? (row.status_emoji || null) : null,
+    statusText: statusLive ? (row.status_text || null) : null,
+    statusUntil: statusLive ? (row.status_until || null) : null,
   };
 }
 

@@ -48,6 +48,7 @@ export const me = () => get('/me');
 
 export const bootstrap = () => get('/bootstrap');
 export const searchUsers = (q) => get(`/users?q=${encodeURIComponent(q || '')}`);
+export const getProfile = (userId) => get(`/users/${encodeURIComponent(userId)}`);
 export const createConversation = (payload) => post('/conversations', payload);
 export const sendMessage = (convoId, payload) => post(`/conversations/${encodeURIComponent(convoId)}/messages`, payload);
 export const editMessage = (msgId, text) => patch(`/messages/${encodeURIComponent(msgId)}`, { text });

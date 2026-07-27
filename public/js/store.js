@@ -289,6 +289,12 @@ export const changePassword = (current, next) => api.changePassword(current, nex
 export const exportData = () => api.exportData();
 export const searchDirectory = (q) => api.searchUsers(q);
 
+export async function fetchProfile(userId) {
+  const profile = await api.getProfile(userId);
+  cacheUser(profile.user);          // keeps names and colours fresh everywhere
+  return profile;
+}
+
 /* ---------- typing ---------- */
 
 export function sendTyping(convoId) {

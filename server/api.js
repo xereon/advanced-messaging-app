@@ -375,16 +375,98 @@ export function listContacts(me) {
 
 /* ---------- profile & settings ---------- */
 
-export function updateProfile(me, { name, avatarColor }) {
+export const PROFILE_LIMITS = { name: 60, pronouns: 24, title: 60, bio: 280, statusText: 80, statusEmoji: 8 };
+
+/** Trim to a limit, and treat an all-whitespace value as clearing the field. */
+function optionalText(value, limit) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const clean = String(value).replace(/\s+/g, ' ').trim().slice(0, limit);
+  return clean || null;
+}
+
+export function updateProfile(me, patch = {}) {
   const db = handle();
-  const nextName = name === undefined ? me.name : String(name).trim().slice(0, 60);
+
+  const nextName = patch.name === undefined
+    ? me.name
+    : String(patch.name).replace(/\s+/g, ' ').trim().slice(0, PROFILE_LIMITS.name);
   if (!nextName) bad('Name cannot be empty.');
-  const nextColor = avatarColor === undefined ? me.avatar_color : String(avatarColor);
+
+  const nextColor = patch.avatarColor === undefined ? me.avatar_color : String(patch.avatarColor);
   if (!/^#[0-9a-fA-F]{6}$/.test(nextColor)) bad('Invalid colour.');
-  db.prepare('UPDATE users SET name = ?, avatar_color = ? WHERE id = ?').run(nextName, nextColor, me.id);
+
+  const fields = {
+    pronouns: optionalText(patch.pronouns, PROFILE_LIMITS.pronouns),
+    title: optionalText(patch.title, PROFILE_LIMITS.title),
+    bio: optionalText(patch.bio, PROFILE_LIMITS.bio),
+    status_text: optionalText(patch.statusText, PROFILE_LIMITS.statusText),
+    status_emoji: optionalText(patch.statusEmoji, PROFILE_LIMITS.statusEmoji),
+  };
+
+  if (patch.timezone !== undefined) {
+    const tz = patch.timezone === null ? null : String(patch.timezone).slice(0, 64);
+    // Reject anything Intl will not accept, rather than storing a bad zone that
+    // breaks time rendering for whoever views the profile.
+    if (tz) {
+      try { new Intl.DateTimeFormat('en', { timeZone: tz }); }
+      catch { bad('Unknown time zone.'); }
+    }
+    fields.timezone = tz;
+  }
+
+  if (patch.statusUntil !== undefined) {
+    const until = patch.statusUntil === null ? null : Number(patch.statusUntil);
+    if (until !== null && (!Number.isFinite(until) || until < Date.now())) bad('Status expiry must be in the future.');
+    fields.status_until = until;
+  }
+  // Clearing the status text should not leave an orphan expiry behind.
+  if (fields.status_text === null && patch.statusUntil === undefined) fields.status_until = null;
+
+  const sets = ['name = ?', 'avatar_color = ?', 'updated_at = ?'];
+  const values = [nextName, nextColor, Date.now()];
+  for (const [column, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    sets.push(`${column} = ?`);
+    values.push(value);
+  }
+  db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...values, me.id);
+
   const updated = publicUser(auth.findById(me.id));
   rt.publish(rt.contactAudience(me.id), 'user', { user: updated });
   return updated;
+}
+
+/**
+ * One person's profile, as this viewer is allowed to see it. Email follows the
+ * same rule as directory search: shown only to people already connected.
+ */
+export function getProfile(me, userId) {
+  const db = handle();
+  const row = auth.findById(userId);
+  if (!row) throw new HttpError(404, 'No such person.');
+
+  const shared = db.prepare(
+    `SELECT c.id, c.type, c.title FROM conversations c
+       JOIN members m1 ON m1.convo_id = c.id AND m1.user_id = ?
+       JOIN members m2 ON m2.convo_id = c.id AND m2.user_id = ?
+      ORDER BY c.created_at`,
+  ).all(me.id, userId);
+
+  const isContact = !!db.prepare('SELECT 1 AS ok FROM contacts WHERE user_id = ? AND contact_id = ?')
+    .get(me.id, userId);
+
+  const user = publicUser(row);
+  if (!row.is_bot && !shared.length && !isContact && row.id !== me.id) user.email = null;
+
+  return {
+    user,
+    isSelf: row.id === me.id,
+    isContact,
+    online: rt.isOnline(row.id) || !!row.is_bot,
+    sharedConversations: shared.map((c) => ({ id: c.id, type: c.type, title: c.title })),
+    directConversationId: shared.find((c) => c.type === 'dm')?.id || null,
+  };
 }
 
 export function saveSettings(me, settings) {

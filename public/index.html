@@ -175,6 +175,7 @@
       </button>
       <div class="menu" id="user-menu" role="menu" hidden>
         <div class="menu-header" id="user-menu-header"></div>
+        <button role="menuitem" data-action="profile"><svg class="icon sm" aria-hidden="true"><use href="#i-user"/></svg>Your profile</button>
         <button role="menuitem" data-action="open-settings"><svg class="icon sm" aria-hidden="true"><use href="#i-sliders"/></svg>Settings</button>
         <button role="menuitem" data-action="shortcuts"><svg class="icon sm" aria-hidden="true"><use href="#i-keyboard"/></svg>Keyboard shortcuts</button>
         <hr>
@@ -278,7 +279,8 @@
   </header>
   <div class="settings-body">
     <nav class="settings-nav" aria-label="Settings sections">
-      <button class="settings-nav-item" data-panel="appearance" aria-current="true"><svg class="icon sm" aria-hidden="true"><use href="#i-droplet"/></svg>Appearance</button>
+      <button class="settings-nav-item" data-panel="profile" aria-current="true"><svg class="icon sm" aria-hidden="true"><use href="#i-user"/></svg>Profile</button>
+      <button class="settings-nav-item" data-panel="appearance"><svg class="icon sm" aria-hidden="true"><use href="#i-droplet"/></svg>Appearance</button>
       <button class="settings-nav-item" data-panel="accessibility"><svg class="icon sm" aria-hidden="true"><use href="#i-eye"/></svg>Accessibility</button>
       <button class="settings-nav-item" data-panel="chat"><svg class="icon sm" aria-hidden="true"><use href="#i-message"/></svg>Chat &amp; notifications</button>
       <button class="settings-nav-item" data-panel="account"><svg class="icon sm" aria-hidden="true"><use href="#i-user"/></svg>Account &amp; security</button>
@@ -287,7 +289,79 @@
     </nav>
     <div class="settings-panels">
 
-      <section class="settings-panel" data-panel="appearance" aria-label="Appearance settings">
+      <section class="settings-panel" data-panel="profile" aria-label="Profile settings">
+        <p class="hint">This is what other people see when they open your profile.</p>
+
+        <div class="profile-preview" id="profile-preview" aria-live="polite">
+          <span class="avatar xl" id="own-avatar" aria-hidden="true"></span>
+          <div class="profile-preview-text">
+            <strong id="own-preview-name">&nbsp;</strong>
+            <span id="own-preview-meta" class="hint"></span>
+            <span id="own-preview-status" class="profile-status"></span>
+          </div>
+        </div>
+
+        <h3>Identity</h3>
+        <div class="setting-row">
+          <label for="set-display-name">Display name</label>
+          <input type="text" id="set-display-name" maxlength="60" autocomplete="name">
+        </div>
+        <div class="setting-row">
+          <label for="set-pronouns">Pronouns <span class="hint">optional</span></label>
+          <input type="text" id="set-pronouns" maxlength="24" placeholder="they/them" autocomplete="off">
+        </div>
+        <div class="setting-row">
+          <label for="set-title">Role or job title <span class="hint">optional</span></label>
+          <input type="text" id="set-title" maxlength="60" placeholder="Design Lead" autocomplete="organization-title">
+        </div>
+        <div class="setting-row">
+          <label for="set-bio">About you <span class="hint">optional</span></label>
+          <textarea id="set-bio" maxlength="280" rows="3" placeholder="A sentence or two about what you do."></textarea>
+          <p class="hint"><output id="bio-remaining">280</output> characters left</p>
+        </div>
+        <div class="setting-row">
+          <label id="avatar-color-label">Avatar colour</label>
+          <div id="avatar-colors" class="avatar-colors" role="radiogroup" aria-labelledby="avatar-color-label"></div>
+        </div>
+
+        <h3>Status</h3>
+        <p class="hint">A short note shown beside your name. Clears itself when it expires.</p>
+        <div class="status-row">
+          <label class="visually-hidden" for="set-status-emoji">Status emoji</label>
+          <input type="text" id="set-status-emoji" maxlength="8" class="status-emoji-input" placeholder="💬" autocomplete="off">
+          <label class="visually-hidden" for="set-status-text">Status message</label>
+          <input type="text" id="set-status-text" maxlength="80" placeholder="Heads-down until 3pm" autocomplete="off">
+        </div>
+        <div class="setting-row">
+          <label for="set-status-until">Clear it</label>
+          <select id="set-status-until">
+            <option value="">Don't clear automatically</option>
+            <option value="30">In 30 minutes</option>
+            <option value="60">In 1 hour</option>
+            <option value="240">In 4 hours</option>
+            <option value="today">At the end of today</option>
+          </select>
+        </div>
+        <button class="btn" id="btn-clear-status" type="button">Clear status now</button>
+
+        <h3>Time zone</h3>
+        <div class="setting-row">
+          <label for="set-timezone">Your time zone <span class="hint">so people know when you're likely around</span></label>
+          <div class="tz-row">
+            <input type="text" id="set-timezone" placeholder="Europe/London" autocomplete="off" spellcheck="false">
+            <button class="btn" type="button" id="btn-detect-tz">Detect</button>
+          </div>
+          <p class="hint" id="tz-preview"></p>
+        </div>
+
+        <p class="field-error" id="profile-error" role="alert" hidden></p>
+        <div class="profile-actions">
+          <button class="btn primary" id="btn-save-profile" type="button">Save profile</button>
+          <span class="hint" id="profile-saved" role="status"></span>
+        </div>
+      </section>
+
+      <section class="settings-panel" data-panel="appearance" hidden aria-label="Appearance settings">
         <h3>Theme</h3>
         <p class="hint">Every theme meets WCAG AA contrast for text. Colour-vision themes use the Okabe-Ito palette and never rely on colour alone.</p>
         <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme"></div>
@@ -361,15 +435,7 @@
       </section>
 
       <section class="settings-panel" data-panel="account" hidden aria-label="Account and security settings">
-        <h3>Profile</h3>
-        <div class="setting-row">
-          <label for="set-display-name">Display name</label>
-          <input type="text" id="set-display-name" maxlength="60" autocomplete="name">
-        </div>
-        <div class="setting-row">
-          <label id="avatar-color-label">Avatar colour</label>
-          <div id="avatar-colors" class="avatar-colors" role="radiogroup" aria-labelledby="avatar-color-label"></div>
-        </div>
+        <p class="hint">Your name, photo colour and status live under <strong>Profile</strong>.</p>
         <h3>Security</h3>
         <div class="security-rows" id="security-rows">
           <div class="security-row">
@@ -473,6 +539,33 @@
   <footer class="dialog-footer">
     <button class="btn" id="new-chat-toggle-group" aria-pressed="false"><svg class="icon sm" aria-hidden="true"><use href="#i-users"/></svg>Create a group</button>
     <button class="btn primary" id="new-chat-start" disabled>Start</button>
+  </footer>
+</dialog>
+
+<!-- Someone's profile -->
+<dialog id="profile-dialog" class="dialog profile-dialog" aria-labelledby="profile-name">
+  <header class="dialog-header">
+    <h2 id="profile-dialog-heading">Profile</h2>
+    <button class="btn icon-btn" data-close-dialog aria-label="Close profile"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <div class="dialog-body">
+    <div class="profile-head">
+      <span class="avatar xl" id="profile-avatar" aria-hidden="true"></span>
+      <div class="profile-head-text">
+        <h3 id="profile-name"></h3>
+        <p class="hint" id="profile-meta"></p>
+        <p class="profile-status" id="profile-status" hidden></p>
+      </div>
+    </div>
+    <p class="profile-bio" id="profile-bio" hidden></p>
+    <dl class="profile-facts" id="profile-facts"></dl>
+    <div id="profile-shared"></div>
+  </div>
+  <footer class="dialog-footer">
+    <button class="btn" id="profile-contact-btn" type="button"></button>
+    <button class="btn primary" id="profile-message-btn" type="button">
+      <svg class="icon sm" aria-hidden="true"><use href="#i-message"/></svg>Message
+    </button>
   </footer>
 </dialog>
 

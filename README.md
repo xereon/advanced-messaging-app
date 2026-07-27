@@ -292,8 +292,21 @@ export of everything the server holds about you.
 
 Search covers conversations, **people** (by name, email or role) and full
 message history, with a separate in-conversation search that cycles matches.
-Anyone you can find you can add to **contacts**, which get their own sidebar tab
-and sort to the top of search.
+People search queries the server, so accounts that registered independently can
+find each other; matching on an email address works, but the address itself is
+only disclosed to people you already share a conversation with or have as a
+contact. Anyone you can find you can add to **contacts**, which get their own
+sidebar tab and sort to the top of search.
+
+**Profiles.** Every account has one: display name, pronouns, role, a short bio,
+an avatar colour, a time zone, and a status with an emoji that can expire on its
+own after 30 minutes, an hour, four hours, or at the end of the day. Open anyone
+by clicking their name or avatar in a conversation header, or their avatar
+beside a message; open your own from the account menu. A profile shows their
+availability or when they were last seen, their local time so you know whether
+they are awake, groups you have in common, and buttons to message them or add
+them as a contact. You edit your own under **Settings → Profile**, with a live
+preview of the card other people will see.
 
 History loads the most recent 200 messages per conversation, with a **Load
 earlier messages** control that pages backwards while holding your reading

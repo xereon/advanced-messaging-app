@@ -497,6 +497,9 @@ async function handleApi(req, res, url) {
     return send(res, 200, api.removeContact(need(), decodeURIComponent(m[1])));
   }
 
+  if ((m = path.match(/^\/users\/([^/]+)$/)) && method === 'GET') {
+    return send(res, 200, api.getProfile(need(), decodeURIComponent(m[1])));
+  }
   if (path === '/profile' && method === 'PATCH') return send(res, 200, { user: api.updateProfile(need(), body) });
   if (path === '/settings' && method === 'PUT') return send(res, 200, api.saveSettings(need(), body.settings));
   if (path === '/account/pin' && method === 'POST') return send(res, 200, await api.setPin(need(), body.pin));
