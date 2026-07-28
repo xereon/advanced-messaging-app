@@ -9,7 +9,7 @@ import {
   randomBytes, scrypt as scryptCb, timingSafeEqual, createHash, randomUUID,
 } from 'node:crypto';
 import { promisify } from 'node:util';
-import { handle, publicUser } from './db.js';
+import { handle, tx, publicUser } from './db.js';
 
 const scrypt = promisify(scryptCb);
 
@@ -314,32 +314,52 @@ export function deleteCredential(userId, credentialId) {
 
 /* ---------- rate limiting ---------- */
 
-const buckets = new Map();
 let limitsEnabled = process.env.RELAY_RATE_LIMIT !== 'off';
 
-/** Fixed-window limiter. Returns true when the call is allowed. */
+/**
+ * Fixed-window limiter, shared across workers. Returns true when allowed.
+ *
+ * Counting in process memory silently multiplies every limit by the size of
+ * the worker pool: with four workers, an "8 attempts" cap really allows 32.
+ * The counter therefore lives in the database, where all workers share it.
+ */
 export function rateLimit(key, { limit, windowMs }) {
   if (!limitsEnabled) return true;
   const now = Date.now();
-  const b = buckets.get(key);
-  if (!b || now > b.reset) {
-    buckets.set(key, { count: 1, reset: now + windowMs });
+  const db = handle();
+
+  try {
+    return tx(() => {
+      const row = db.prepare('SELECT window_start, count FROM rate_limits WHERE key = ?').get(key);
+      if (!row || now - row.window_start >= windowMs) {
+        db.prepare(
+          `INSERT INTO rate_limits (key, window_start, count) VALUES (?,?,1)
+           ON CONFLICT(key) DO UPDATE SET window_start = excluded.window_start, count = 1`,
+        ).run(key, now);
+        return true;
+      }
+      const next = row.count + 1;
+      db.prepare('UPDATE rate_limits SET count = ? WHERE key = ?').run(next, key);
+      return next <= limit;
+    });
+  } catch {
+    // A limiter that cannot read its own state must not lock everybody out.
     return true;
   }
-  b.count += 1;
-  return b.count <= limit;
 }
 
-export function resetRateLimits() { buckets.clear(); }
+export function resetRateLimits() {
+  try { handle().prepare('DELETE FROM rate_limits').run(); } catch { /* not open */ }
+}
 
 /** Tests flip this to exercise both the limited and unlimited paths. */
 export function setRateLimitEnabled(value) {
   limitsEnabled = !!value;
-  if (!value) buckets.clear();
+  if (!value) resetRateLimits();
 }
 
-// Keep the bucket map from growing without bound in a long-lived process.
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, b] of buckets) if (now > b.reset) buckets.delete(k);
-}, 60_000).unref?.();
+export function pruneRateLimits(olderThanMs = 60 * 60 * 1000) {
+  try {
+    handle().prepare('DELETE FROM rate_limits WHERE window_start < ?').run(Date.now() - olderThanMs);
+  } catch { /* not open */ }
+}

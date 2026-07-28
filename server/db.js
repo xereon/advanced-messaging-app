@@ -172,6 +172,31 @@ function migrate() {
       json     TEXT NOT NULL
     );
 
+    -- The cross-worker event bus.
+    --
+    -- Several worker processes serve the same app (Passenger runs a pool), and
+    -- each has its own memory, so an in-process fan-out only ever reaches the
+    -- clients that worker happens to hold. Events are appended here instead:
+    -- every worker tails the table and delivers to its own streams. The
+    -- AUTOINCREMENT id is globally unique and monotonic, which is also what
+    -- makes an SSE Last-Event-ID resume correct.
+    CREATE TABLE IF NOT EXISTS events (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      type      TEXT NOT NULL,
+      data      TEXT NOT NULL,
+      audience  TEXT NOT NULL,
+      at        INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_at ON events(at);
+
+    -- Rate limits must be shared too: held per process, every limit is
+    -- silently multiplied by the number of workers.
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      key           TEXT PRIMARY KEY,
+      window_start  INTEGER NOT NULL,
+      count         INTEGER NOT NULL
+    );
+
     -- Monotonic counter so clients can resume an SSE stream from a known point.
     CREATE TABLE IF NOT EXISTS counters (
       name   TEXT PRIMARY KEY,

@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 97 tests
+npm test     # 189 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -164,6 +164,7 @@ Schedule it with cron: `15 3 * * * /srv/relay/deploy/backup.sh /var/backups/rela
 | `RELAY_SECURE` | unset | Set to `1` behind HTTPS to add `Secure` to the session cookie |
 | `RELAY_ORIGIN` | unset | Extra allowed WebAuthn origin, if the public origin differs from `Host` |
 | `RELAY_RATE_LIMIT` | on | Set to `off` to disable rate limiting (tests only) |
+| `RELAY_DEMO_BOTS` | on | Set to `0` on a real deployment. Otherwise four fictional colleagues appear in every new account's conversation list and in search — charming as a demo, odd for strangers signing up on your domain. |
 
 #### Email delivery
 
@@ -223,6 +224,17 @@ test/          server tests (node:test)
 deploy/        systemd unit, nginx config, backup script, cPanel .htaccess
 app.js         Passenger entry point for cPanel; `npm start` uses server/index.js
 ```
+
+**Running behind more than one worker.** Passenger (and any multi-instance
+setup) runs several processes over one database, each with its own memory. Two
+things therefore live in SQLite rather than in a process: the **event bus**
+(every worker appends events and tails the table, so a message sent through one
+worker reaches a client connected to another) and **presence** (the SSE
+heartbeat stamps `last_seen`, which any worker can read). Event ids come from an
+AUTOINCREMENT column, so they are globally unique and an SSE `Last-Event-ID`
+resume works even when the reconnect lands on a different worker. Rate limits
+are shared for the same reason — counted per process, every limit is silently
+multiplied by the size of the pool.
 
 **How sync works.** The client hydrates a full snapshot from `/api/bootstrap`,
 then holds an SSE stream. Every change is published to exactly the users
@@ -379,5 +391,7 @@ Worth naming rather than hiding:
   transcoding, and images are sent at full size rather than as thumbnails.
 - **No push notifications.** Desktop notifications work while a tab is open;
   there is no service worker or Web Push, so a closed app is silent.
-- **Single-node only.** The SSE hub and rate limiter hold state in process, so
-  running more than one instance would need a shared bus and store.
+- **The event bus polls at ~700ms.** Cross-worker delivery goes through a table
+  each worker tails, so a message from another worker can arrive up to about a
+  second later than one from your own. A shared pub/sub would make it instant,
+  at the cost of another moving part.

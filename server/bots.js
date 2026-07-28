@@ -41,7 +41,15 @@ const GENERIC = [
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+/**
+ * The demo colleagues are a first-run nicety, not part of a real deployment:
+ * on a public instance, strangers who sign up should not find four fictional
+ * people already messaging them. Set RELAY_DEMO_BOTS=0 to switch them off.
+ */
+export const demoBotsEnabled = () => process.env.RELAY_DEMO_BOTS !== '0';
+
 export function seedBots() {
+  if (!demoBotsEnabled()) return;
   const db = handle();
   const ins = db.prepare(
     `INSERT OR IGNORE INTO users (id, name, email, avatar_color, role, is_bot, created_at, last_seen)
@@ -55,6 +63,7 @@ export function seedBots() {
 
 /** First-run conversations so a new account lands in a lived-in workspace. */
 export function seedConversationsFor(userId, displayName) {
+  if (!demoBotsEnabled()) return;
   const db = handle();
   const now = Date.now();
   const first = String(displayName || '').split(' ')[0] || 'there';
@@ -125,6 +134,7 @@ export function cancelBotTimers() {
 /** Called after a human sends a message. Bots in that conversation read it,
     show a typing indicator, then reply. */
 export function scheduleBotReply(convoId, msg) {
+  if (!demoBotsEnabled()) return;
   const db = handle();
   const botIds = db.prepare(
     `SELECT u.id FROM members m JOIN users u ON u.id = m.user_id

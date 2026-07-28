@@ -15,14 +15,91 @@ import { handle } from './db.js';
 
 /** userId -> Set<res> */
 const streams = new Map();
-/** Recent events kept in memory so a reconnecting client can catch up. */
-const backlog = [];
-const BACKLOG_LIMIT = 500;
 const HEARTBEAT_MS = 25_000;
+/** How often each worker tails the shared event table. */
+const BUS_POLL_MS = 700;
+/** How long events are retained for a reconnecting client to replay. */
+const BUS_RETENTION_MS = 15 * 60 * 1000;
 /** How long after its last heartbeat an account still counts as online. */
 export const PRESENCE_TTL_MS = 70_000;
 
-let lastEventId = 0;
+/** Highest event id this worker has delivered from the bus. */
+let cursor = 0;
+/**
+ * Events this worker published and already delivered locally. The tail must
+ * advance past them without delivering twice.
+ */
+const selfPublished = new Set();
+let busTimer = null;
+let pruneCounter = 0;
+
+/* ---------- the shared bus ---------- */
+
+function insertEvent(type, data, audience) {
+  const info = handle().prepare(
+    'INSERT INTO events (type, data, audience, at) VALUES (?,?,?,?)',
+  ).run(type, JSON.stringify(data), JSON.stringify(audience), Date.now());
+  return Number(info.lastInsertRowid);
+}
+
+function deliverLocal(evt) {
+  for (const userId of evt.audience) {
+    for (const res of streams.get(userId) || []) writeEvent(res, evt);
+  }
+}
+
+/** Deliver anything appended by another worker since we last looked. */
+function drainBus() {
+  let rows;
+  try {
+    rows = handle().prepare('SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 500').all(cursor);
+  } catch {
+    return;   // database closing
+  }
+
+  for (const row of rows) {
+    cursor = row.id;
+    // Already delivered by this worker at publish time.
+    if (selfPublished.delete(row.id)) continue;
+    try {
+      deliverLocal({
+        id: row.id,
+        type: row.type,
+        data: JSON.parse(row.data),
+        audience: new Set(JSON.parse(row.audience)),
+      });
+    } catch { /* a malformed row must not stall the tail */ }
+  }
+
+  // Occasionally drop events nobody can still ask to replay.
+  if (++pruneCounter % 60 === 0) {
+    try {
+      handle().prepare('DELETE FROM events WHERE at < ?').run(Date.now() - BUS_RETENTION_MS);
+    } catch { /* not important enough to care */ }
+  }
+}
+
+function startBus() {
+  if (busTimer) return;
+  // Start from the present, or a first connection would replay the backlog.
+  if (cursor === 0) {
+    try {
+      cursor = handle().prepare('SELECT IFNULL(MAX(id), 0) AS id FROM events').get().id;
+    } catch { cursor = 0; }
+  }
+  busTimer = setInterval(drainBus, BUS_POLL_MS);
+  busTimer.unref?.();
+}
+
+function stopBusIfIdle() {
+  if (streams.size === 0 && busTimer) {
+    clearInterval(busTimer);
+    busTimer = null;
+  }
+}
+
+/** Exposed for tests: drain synchronously instead of waiting for the timer. */
+export function pumpBus() { drainBus(); }
 
 export function subscribe(userId, res, sinceId) {
   res.writeHead(200, {
@@ -37,11 +114,22 @@ export function subscribe(userId, res, sinceId) {
   const wasOffline = streams.get(userId).size === 0;
   streams.get(userId).add(res);
 
-  // Replay anything this user missed while disconnected.
+  startBus();
+
+  // Replay anything this user missed while disconnected. Reading from the
+  // shared table means a resume works even if the reconnect lands on a
+  // different worker than the original connection.
   if (sinceId > 0) {
-    for (const evt of backlog) {
-      if (evt.id > sinceId && evt.audience.has(userId)) writeEvent(res, evt);
-    }
+    try {
+      const rows = handle().prepare(
+        'SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 500',
+      ).all(sinceId);
+      for (const row of rows) {
+        const audience = JSON.parse(row.audience);
+        if (!audience.includes(userId)) continue;
+        writeEvent(res, { id: row.id, type: row.type, data: JSON.parse(row.data) });
+      }
+    } catch { /* replay is best effort */ }
   }
 
   // The heartbeat does double duty: it keeps the connection from idling out,
@@ -64,6 +152,7 @@ export function subscribe(userId, res, sinceId) {
       // rather than waiting out the full TTL.
       expireLastSeen(userId);
       publishPresence(userId, false);
+      stopBusIfIdle();
     }
   };
   res.on('close', cleanup);
@@ -91,16 +180,27 @@ function writeEvent(res, evt) {
   } catch { /* closed mid-write; cleanup handles removal */ }
 }
 
-/** Push an event to a specific set of users. */
+/**
+ * Push an event to a specific set of users, wherever they are connected.
+ *
+ * The event is appended to the shared table so every worker can see it, then
+ * delivered immediately to any stream this worker holds — so a client on this
+ * worker sees no added latency, and clients elsewhere arrive one poll later.
+ */
 export function publish(userIds, type, data) {
-  const audience = new Set(userIds);
-  if (!audience.size) return;
-  const evt = { id: ++lastEventId, type, data, audience };
-  backlog.push(evt);
-  if (backlog.length > BACKLOG_LIMIT) backlog.shift();
-  for (const userId of audience) {
-    for (const res of streams.get(userId) || []) writeEvent(res, evt);
+  const audience = [...new Set(userIds)];
+  if (!audience.length) return;
+
+  let id;
+  try {
+    id = insertEvent(type, data, audience);
+  } catch {
+    // If the append fails, still serve the clients we can reach directly.
+    deliverLocal({ id: 0, type, data, audience: new Set(audience) });
+    return;
   }
+  selfPublished.add(id);
+  deliverLocal({ id, type, data, audience: new Set(audience) });
 }
 
 /** Everyone who shares a conversation with this user, plus the user. */
@@ -153,6 +253,7 @@ export function isOnline(userId) {
 }
 
 export function closeAll() {
+  if (busTimer) { clearInterval(busTimer); busTimer = null; }
   for (const set of streams.values()) {
     for (const res of set) { try { res.end(); } catch { /* already gone */ } }
   }

@@ -4,7 +4,7 @@
 import { handle, tx, nextSeq, currentSeq, publicUser, shapeMessage, shapeConvo } from './db.js';
 import * as auth from './auth.js';
 import * as rt from './realtime.js';
-import { scheduleBotReply } from './bots.js';
+import { scheduleBotReply, demoBotsEnabled } from './bots.js';
 import * as files from './files.js';
 
 const MAX_TEXT = 4000;
@@ -133,9 +133,9 @@ export function bootstrap(me) {
     SELECT DISTINCT u.* FROM users u WHERE u.id IN (
       SELECT m2.user_id FROM members m1 JOIN members m2 ON m2.convo_id = m1.convo_id WHERE m1.user_id = ?
       UNION SELECT contact_id FROM contacts WHERE user_id = ?
-      UNION SELECT id FROM users WHERE is_bot = 1
+      UNION SELECT id FROM users WHERE is_bot = 1 AND ? = 1
       UNION SELECT id FROM users WHERE is_guest = 1 AND retired = 0
-    ) OR u.id = ?`).all(me.id, me.id, me.id);
+    ) OR u.id = ?`).all(me.id, me.id, demoBotsEnabled() ? 1 : 0, me.id);
 
   const settingsRow = db.prepare('SELECT json FROM settings WHERE user_id = ?').get(me.id);
 
@@ -170,8 +170,9 @@ export function searchUsers(me, q) {
   const rows = db.prepare(`
     SELECT * FROM users
      WHERE id != ? AND retired = 0
+       AND (is_bot = 0 OR ? = 1)
        AND (LOWER(name) LIKE ? OR LOWER(IFNULL(email,'')) LIKE ? OR LOWER(IFNULL(role,'')) LIKE ?)
-     ORDER BY name LIMIT 50`).all(me.id, needle, needle, needle);
+     ORDER BY name LIMIT 50`).all(me.id, demoBotsEnabled() ? 1 : 0, needle, needle, needle);
 
   const known = new Set(db.prepare(`
     SELECT m2.user_id AS id FROM members m1
