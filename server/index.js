@@ -18,6 +18,7 @@ import * as rt from './realtime.js';
 import * as webauthn from './webauthn.js';
 import * as files from './files.js';
 import * as mailer from './mailer.js';
+import * as push from './push.js';
 import { seedBots, seedConversationsFor, cancelBotTimers } from './bots.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -547,6 +548,17 @@ async function handleApi(req, res, url) {
   if ((m = path.match(/^\/users\/([^/]+)$/)) && method === 'GET') {
     return send(res, 200, api.getProfile(need(), decodeURIComponent(m[1])));
   }
+  if (path === '/push/key' && method === 'GET') {
+    need();
+    return send(res, 200, { publicKey: push.publicKey() });
+  }
+  if (path === '/push/subscribe' && method === 'POST') {
+    return send(res, 201, push.saveSubscription(need().id, body));
+  }
+  if (path === '/push/subscribe' && method === 'DELETE') {
+    return send(res, 200, push.removeSubscription(need().id, body.endpoint));
+  }
+
   if (path === '/profile' && method === 'PATCH') return send(res, 200, { user: api.updateProfile(need(), body) });
   if (path === '/settings' && method === 'PUT') return send(res, 200, api.saveSettings(need(), body.settings));
   if (path === '/account/pin' && method === 'POST') return send(res, 200, await api.setPin(need(), body.pin));

@@ -122,6 +122,19 @@ export async function store(req, { userId, convoId, name, declaredMime }) {
     throw e;
   }
 
+  // No virus scanner ships with Relay, and pretending otherwise would be worse
+  // than saying so. RELAY_SCAN_COMMAND lets a deployment point at one (clamscan,
+  // for instance); a non-zero exit rejects the upload.
+  if (process.env.RELAY_SCAN_COMMAND) {
+    const clean = await scanFile(path);
+    if (!clean) {
+      await unlink(path).catch(() => {});
+      const e = new Error('That file was rejected by the virus scanner.');
+      e.status = 422;
+      throw e;
+    }
+  }
+
   // Trust the sniffed type over the client's claim; fall back to a download.
   const sniffed = sniffMime(head);
   const mime = sniffed || (INLINE_TYPES.has(declaredMime) ? null : 'application/octet-stream') || 'application/octet-stream';
@@ -133,6 +146,18 @@ export async function store(req, { userId, convoId, name, declaredMime }) {
   ).run(id, convoId, userId, safeName(name), mime, size, dims.width, dims.height, path, Date.now());
 
   return shape(handle().prepare('SELECT * FROM attachments WHERE id = ?').get(id));
+}
+
+/**
+ * Hand the stored file to an external scanner, if one is configured.
+ * The command receives the path as its only argument; exit code 0 means clean.
+ */
+async function scanFile(path) {
+  const { execFile } = await import('node:child_process');
+  const command = process.env.RELAY_SCAN_COMMAND;
+  return new Promise((resolve) => {
+    execFile(command, [path], { timeout: 30_000 }, (err) => resolve(!err));
+  });
 }
 
 /** Keep something human-readable, but nothing that can steer a filesystem.

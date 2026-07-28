@@ -172,6 +172,24 @@ function migrate() {
       json     TEXT NOT NULL
     );
 
+    -- Small server-side key/value store: the VAPID identity lives here so a
+    -- fresh install needs no configuration and keeps the same keys across
+    -- restarts. Rotating them would invalidate every push subscription.
+    CREATE TABLE IF NOT EXISTS config (
+      key    TEXT PRIMARY KEY,
+      value  TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint    TEXT PRIMARY KEY,
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      p256dh      TEXT NOT NULL,
+      auth        TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      failures    INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
+
     -- The cross-worker event bus.
     --
     -- Several worker processes serve the same app (Passenger runs a pool), and

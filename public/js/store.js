@@ -157,7 +157,9 @@ function upsertMessage(msg, clientId) {
     list.push(msg);
     list.sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0));
   } else {
-    list[i] = { ...list[i], ...msg, pending: false, failed: false };
+    // Clear every provisional flag: a confirmed message is not pending, not
+    // queued and not failed, whatever it was a moment ago.
+    list[i] = { ...list[i], ...msg, pending: false, queued: false, failed: false };
   }
   messages.set(msg.convoId, list);
   return { msg, replacedId };
@@ -208,9 +210,24 @@ export async function appendMessage(convoId, draft) {
   }
 }
 
-/** Send everything the outbox is holding. Safe to call repeatedly. */
+/**
+ * Send everything the outbox is holding. Safe to call repeatedly.
+ *
+ * Two things ask for a flush when the network returns — the browser's `online`
+ * event and the event stream reconnecting — and they can arrive together. Both
+ * would read the same queue and send every entry twice, so a flush already in
+ * progress is joined rather than started again.
+ */
+let flushing = null;
+
 export async function flushOutbox() {
   if (!me) return 0;
+  if (flushing) return flushing;
+  flushing = doFlush().finally(() => { flushing = null; });
+  return flushing;
+}
+
+async function doFlush() {
   return outbox.flush(
     me.id,
     async (entry) => {
@@ -347,6 +364,54 @@ export const changePassword = (current, next) => api.changePassword(current, nex
 export const exportData = () => api.exportData();
 export const searchDirectory = (q) => api.searchUsers(q);
 export const searchMessages = (q) => api.searchMessages(q);
+
+/* ---------- push notifications ---------- */
+
+const urlBase64ToUint8Array = (base64) => {
+  const padded = base64.replace(/-/g, '+').replace(/_/g, '/')
+    + '='.repeat((4 - (base64.length % 4)) % 4);
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+};
+
+export const pushSupported = () => !!(
+  'serviceWorker' in navigator && 'PushManager' in window && window.isSecureContext
+);
+
+/** Register this device for notifications that arrive with the app closed. */
+export async function enablePush() {
+  if (!pushSupported()) throw new Error('This browser cannot receive push notifications.');
+  const registration = await navigator.serviceWorker.ready;
+
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    const { publicKey } = await api.pushKey();
+    subscription = await registration.pushManager.subscribe({
+      // Push services require every message to be attributable and encrypted.
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+  }
+  await api.pushSubscribe(subscription.toJSON());
+  return true;
+}
+
+export async function disablePush() {
+  if (!pushSupported()) return;
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return;
+  // Tell the server first, so it stops sending even if unsubscribing fails.
+  await api.pushUnsubscribe(subscription.endpoint).catch(() => {});
+  await subscription.unsubscribe().catch(() => {});
+}
+
+export async function pushEnabled() {
+  if (!pushSupported()) return false;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    return !!(await registration.pushManager.getSubscription());
+  } catch { return false; }
+}
 export const requestReset = (email) => api.requestReset(email);
 export const confirmReset = (email, code, password) => api.confirmReset(email, code, password);
 

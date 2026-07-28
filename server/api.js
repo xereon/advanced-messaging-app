@@ -6,6 +6,7 @@ import * as auth from './auth.js';
 import * as rt from './realtime.js';
 import { scheduleBotReply, demoBotsEnabled } from './bots.js';
 import * as files from './files.js';
+import * as push from './push.js';
 
 const MAX_TEXT = 4000;
 const HISTORY_LIMIT = 200;
@@ -324,6 +325,49 @@ export function removeMember(me, convoId, userId) {
   return { removed: false };
 }
 
+/**
+ * Notify the people who are not looking.
+ *
+ * Someone with a live stream already saw it, and a muted conversation should
+ * stay quiet, so neither gets a notification.
+ */
+async function pushToAbsentMembers(convoId, sender, msg) {
+  const db = handle();
+  const convo = db.prepare('SELECT type, title FROM conversations WHERE id = ?').get(convoId);
+  const members = db.prepare('SELECT user_id FROM members WHERE convo_id = ?').all(convoId)
+    .map((r) => r.user_id)
+    .filter((id) => id !== sender.id);
+
+  const preview = msg.attachments?.length && !msg.text
+    ? `Sent ${msg.attachments.length === 1 ? 'a file' : `${msg.attachments.length} files`}`
+    : msg.text.slice(0, 140);
+
+  await Promise.all(members.map(async (userId) => {
+    const person = auth.findById(userId);
+    if (!person || person.is_bot) return;
+    if (rt.isOnline(userId)) return;
+
+    const meta = db.prepare('SELECT muted FROM convo_meta WHERE user_id = ? AND convo_id = ?')
+      .get(userId, convoId);
+    if (meta?.muted) return;
+
+    // Respect the same switch that governs in-app notifications.
+    const settingsRow = db.prepare('SELECT json FROM settings WHERE user_id = ?').get(userId);
+    if (settingsRow) {
+      try {
+        if (JSON.parse(settingsRow.json).desktopNotifs === false) return;
+      } catch { /* malformed settings should not silence someone */ }
+    }
+
+    await push.notify(userId, {
+      title: convo?.type === 'group' ? `${sender.name} in ${convo.title}` : sender.name,
+      body: preview,
+      convoId,
+      messageId: msg.id,
+    });
+  }));
+}
+
 /* ---------- message search ---------- */
 
 /**
@@ -389,6 +433,8 @@ export function sendMessage(me, convoId, { text, replyTo, clientId, attachmentId
   const msg = { ...shapeMessage(row), attachments };
   rt.publish(rt.convoAudience(convoId), 'message', { message: msg, clientId });
   scheduleBotReply(convoId, msg);
+  // Fire and forget: a slow push service must not delay the sender's response.
+  pushToAbsentMembers(convoId, me, msg).catch(() => {});
   return msg;
 }
 

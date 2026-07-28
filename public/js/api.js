@@ -31,7 +31,7 @@ export const get = (path) => request('GET', path);
 export const post = (path, body) => request('POST', path, body ?? {});
 export const patch = (path, body) => request('PATCH', path, body ?? {});
 export const put = (path, body) => request('PUT', path, body ?? {});
-export const del = (path) => request('DELETE', path);
+export const del = (path, body) => request('DELETE', path, body);
 
 /* ---------- auth ---------- */
 
@@ -48,6 +48,9 @@ export const me = () => get('/me');
 
 export const bootstrap = () => get('/bootstrap');
 export const presence = () => get('/presence');
+export const pushKey = () => get('/push/key');
+export const pushSubscribe = (subscription) => post('/push/subscribe', subscription);
+export const pushUnsubscribe = (endpoint) => del('/push/subscribe', { endpoint });
 export const searchUsers = (q) => get(`/users?q=${encodeURIComponent(q || '')}`);
 export const getProfile = (userId) => get(`/users/${encodeURIComponent(userId)}`);
 export const requestReset = (email) => post('/auth/reset/request', { email });
@@ -132,8 +135,49 @@ export const deletePasskey = (id) => del(`/account/passkeys/${encodeURIComponent
 export const olderMessages = (convoId, beforeSeq, limit = 50) =>
   get(`/conversations/${encodeURIComponent(convoId)}/messages?before=${beforeSeq}&limit=${limit}`);
 
+const THUMB_MAX_EDGE = 1280;
+const THUMB_MIN_SAVING = 0.85;   // not worth re-encoding for a token gain
+
+/**
+ * Downscale an oversized photo before it is uploaded.
+ *
+ * A phone camera produces several megabytes that every recipient then has to
+ * download to look at a chat bubble. Re-encoding in the browser avoids needing
+ * an image library on the server, and keeps the original aspect ratio. If
+ * anything about it fails — an unsupported codec, no canvas — the original file
+ * is uploaded unchanged.
+ */
+export async function shrinkImage(file) {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return file;
+  if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') return file;
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const longest = Math.max(bitmap.width, bitmap.height);
+    if (longest <= THUMB_MAX_EDGE) { bitmap.close?.(); return file; }
+
+    const scale = THUMB_MAX_EDGE / longest;
+    const width = Math.round(bitmap.width * scale);
+    const height = Math.round(bitmap.height * scale);
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close?.();
+
+    // Keep PNG for PNG (transparency); otherwise JPEG is far smaller.
+    const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+    const blob = await canvas.convertToBlob({ type, quality: 0.82 });
+    if (!blob || blob.size > file.size * THUMB_MIN_SAVING) return file;
+
+    return new File([blob], file.name, { type: blob.type, lastModified: file.lastModified });
+  } catch {
+    return file;   // never block an upload over a resize
+  }
+}
+
 /** Uploads the raw file; the name and type ride in headers. */
-export async function uploadAttachment(convoId, file, { onProgress } = {}) {
+export async function uploadAttachment(convoId, original, { onProgress } = {}) {
+  const file = await shrinkImage(original);
   const res = await fetch(`/api/conversations/${encodeURIComponent(convoId)}/attachments`, {
     method: 'POST',
     credentials: 'same-origin',

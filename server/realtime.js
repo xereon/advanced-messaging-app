@@ -17,7 +17,7 @@ import { handle } from './db.js';
 const streams = new Map();
 const HEARTBEAT_MS = 25_000;
 /** How often each worker tails the shared event table. */
-const BUS_POLL_MS = 700;
+const BUS_POLL_MS = 250;
 /** How long events are retained for a reconnecting client to replay. */
 const BUS_RETENTION_MS = 15 * 60 * 1000;
 /** How long after its last heartbeat an account still counts as online. */

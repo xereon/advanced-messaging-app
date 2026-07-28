@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 189 tests
+npm test     # 210 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -164,6 +164,9 @@ Schedule it with cron: `15 3 * * * /srv/relay/deploy/backup.sh /var/backups/rela
 | `RELAY_SECURE` | unset | Set to `1` behind HTTPS to add `Secure` to the session cookie |
 | `RELAY_ORIGIN` | unset | Extra allowed WebAuthn origin, if the public origin differs from `Host` |
 | `RELAY_RATE_LIMIT` | on | Set to `off` to disable rate limiting (tests only) |
+| `RELAY_SCAN_COMMAND` | unset | External virus scanner for uploads; a non-zero exit rejects the file |
+| `RELAY_VAPID_PUBLIC` / `RELAY_VAPID_PRIVATE` | generated | Web Push identity. Generated once and stored on first use; set these to pin it. Changing them invalidates every existing subscription |
+| `RELAY_VAPID_SUBJECT` | `mailto:admin@localhost` | Contact address push services can use to reach you |
 | `RELAY_DEMO_BOTS` | on | Set to `0` on a real deployment. Otherwise four fictional colleagues appear in every new account's conversation list and in search — charming as a demo, odd for strangers signing up on your domain. |
 
 #### Email delivery
@@ -294,6 +297,13 @@ as an inert download; only a small allow-list of image types is ever served
 inline, behind `Content-Disposition`, `nosniff` and a `default-src 'none'; sandbox`
 CSP. Downloads are membership-checked, and deleting a message deletes its files.
 
+**Notifications reach you with the app closed.** Relay is installable, and
+turning notifications on in Settings registers the device for Web Push — VAPID
+signing and RFC 8291 payload encryption, so the push service relays a body it
+cannot read. Tapping a notification focuses an open tab rather than launching a
+duplicate. Messages you send with no connection are held in an outbox that
+survives a reload and flushes when the network returns.
+
 Live delivery with distinct status icons (sending, sent ✓, delivered ✓✓, read),
 typing indicators, read receipts you can switch off (the server then withholds
 them from others while still tracking your own unread count), emoji reactions,
@@ -378,20 +388,26 @@ Settings are stored on your account, so they follow you between devices.
 
 Worth naming rather than hiding:
 
+- **A service worker can serve stale code for one load.** Assets are cached and
+  refreshed in the background, so the *next* visit gets a deployed change.
+  Anyone looking immediately after a deploy may need a hard reload. Bumping
+  `CACHE` in `public/sw.js` forces it.
 - **Attestation is not validated.** Registration uses `attestation: 'none'`, so
   Relay verifies possession of the key but does not attest which authenticator
-  model produced it. That is the right default for a normal deployment; an
-  enterprise that must allow-list hardware would need full attestation parsing.
-- **Very long histories still render every loaded message.** Updates are now
-  incremental and history is paged, so the list only grows when you ask it to,
-  but there is no windowing — scrolling back through tens of thousands of
-  messages in one sitting would eventually get heavy.
-- **Attachments are not scanned or thumbnailed.** Files are stored as uploaded,
-  served inertly, and capped at 10 MB; there is no virus scanning, no
-  transcoding, and images are sent at full size rather than as thumbnails.
-- **No push notifications.** Desktop notifications work while a tab is open;
-  there is no service worker or Web Push, so a closed app is silent.
-- **The event bus polls at ~700ms.** Cross-worker delivery goes through a table
-  each worker tails, so a message from another worker can arrive up to about a
-  second later than one from your own. A shared pub/sub would make it instant,
-  at the cost of another moving part.
+  model produced it. This is a deliberate choice, not an omission — it is what
+  most services do, and validating attestation only buys something if you intend
+  to allow-list specific hardware. That would need certificate-chain parsing per
+  attestation format.
+- **No virus scanning ships.** Point `RELAY_SCAN_COMMAND` at a scanner
+  (`clamscan`, for instance) and a non-zero exit rejects the upload; without it,
+  files are stored as sent. They are always served inertly — sniffed type, forced
+  download for anything but a short image allow-list, and a `sandbox` CSP.
+- **Messages are stored in plaintext.** Encrypting bodies at rest is
+  straightforward and worth doing; true end-to-end encryption is a different
+  product — it would break server-side search and needs cross-device key
+  management.
+- **No blocking or reporting.** Registration is open and anyone can find and
+  message anyone, with no way to block them. This is the next thing I would fix.
+- **One database.** SQLite with WAL handles a busy small deployment comfortably,
+  and the event bus and presence now work across worker processes, but nothing
+  here shards or replicates.

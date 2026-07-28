@@ -66,7 +66,9 @@ export function client(base) {
     post: (p, b, o) => call('POST', p, b ?? {}, o),
     patch: (p, b, o) => call('PATCH', p, b ?? {}, o),
     put: (p, b, o) => call('PUT', p, b ?? {}, o),
-    del: (p, o) => call('DELETE', p, undefined, o),
+    // DELETE carries a body for endpoints keyed by an opaque value (a push
+    // endpoint URL), which does not belong in a path segment.
+    del: (p, b, o) => call('DELETE', p, b, o),
     get cookie() { return cookie; },
     set cookie(v) { cookie = v; },
   };

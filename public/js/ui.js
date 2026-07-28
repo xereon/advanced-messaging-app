@@ -26,6 +26,10 @@ let lastReadBeforeOpen = 0;  // for the "New messages" divider
 let convoSearch = null;      // { q, hits: [msgId], idx }
 let typingByConvo = new Map(); // convoId -> { names:Set, timer }
 let pendingScrollMsg = null;
+/** How many messages may be in the DOM at once. */
+const RENDER_WINDOW = 120;
+const RENDER_WINDOW_STEP = 120;
+let renderWindow = RENDER_WINDOW;
 let audioCtx = null;
 
 /* ================= helpers ================= */
@@ -799,6 +803,8 @@ function renderGlobalSearch(q) {
         clearGlobalSearch();
         pendingScrollMsg = m.id;
         openConvo(convo.id);
+        renderWindow = Number.MAX_SAFE_INTEGER;
+        renderMessages();
       });
       results.append(btn);
     }
@@ -826,6 +832,7 @@ function openConvo(convoId) {
   pendingAttachments = [];
   renderAttachmentTray();
   activeMsgId = null;
+  renderWindow = RENDER_WINDOW;
   for (const open of $$('#messages .msg.actions-open')) open.classList.remove('actions-open');
   activeConvoId = convoId;
   lastReadBeforeOpen = db.readsOf(convoId)[me.id] || 0;
@@ -922,6 +929,7 @@ async function loadOlderMessages(btn) {
   try {
     const added = await db.loadOlder(convoId);
     if (convoId !== activeConvoId) return;
+    renderWindow += added;
     // renderMessages keeps the reading position steady as content grows above.
     renderMessages();
     announce(added ? `${added} earlier messages loaded.` : 'No earlier messages.');
@@ -998,6 +1006,13 @@ function renderMessages() {
   const s = getSettings();
   const wrap = $('#messages');
   wrap.setAttribute('role', 'list');
+
+  // Work out the window before anything is drawn: only a slice of the history
+  // is ever in the DOM, so the node count stays bounded however far somebody
+  // scrolls in one sitting. Paging back or searching raises the ceiling.
+  const all = visibleMessages(convo);
+  const msgs = all.length > renderWindow ? all.slice(-renderWindow) : all;
+  const trimmed = all.length - msgs.length;
   const stickToBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 160;
   // Clearing the list resets scrollTop, so remember where the reader was and
   // how much content sat above them. Growing the list above the viewport must
@@ -1006,8 +1021,21 @@ function renderMessages() {
   const prevHeight = wrap.scrollHeight;
   wrap.innerHTML = '';
 
+  // Older messages already loaded but outside the window.
+  if (trimmed > 0) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'load-older';
+    more.textContent = `Show ${Math.min(trimmed, RENDER_WINDOW_STEP)} earlier messages`;
+    more.addEventListener('click', () => {
+      renderWindow += RENDER_WINDOW_STEP;
+      renderMessages();
+    });
+    wrap.append(more);
+  }
+
   // "Load earlier" sits above the first message.
-  if (db.hasOlder(convo.id)) {
+  if (trimmed === 0 && db.hasOlder(convo.id)) {
     const older = document.createElement('button');
     older.type = 'button';
     older.className = 'load-older';
@@ -1016,7 +1044,6 @@ function renderMessages() {
     wrap.append(older);
   }
 
-  const msgs = visibleMessages(convo);
   const q = convoSearch?.q?.toLowerCase() || '';
   let lastDay = '';
   let dividerPlaced = false;
@@ -1074,7 +1101,7 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
   const mine = m.from === me.id;
   const author = db.getUser(m.from);
   const el = document.createElement('div');
-  el.className = `msg ${mine ? 'out' : 'in'}${groupStart ? ' group-start' : ''}${groupEnd ? ' group-end' : ''}${m.deletedAt ? ' deleted' : ''}${m.pending ? ' pending' : ''}${m.failed ? ' failed' : ''}`;
+  el.className = `msg ${mine ? 'out' : 'in'}${groupStart ? ' group-start' : ''}${groupEnd ? ' group-end' : ''}${m.deletedAt ? ' deleted' : ''}${m.pending ? ' pending' : ''}${m.queued ? ' queued' : ''}${m.failed ? ' failed' : ''}`;
   el.dataset.msgId = m.id;
   // Roving tabindex: only the active message is tabbable, so the whole list is
   // a single tab stop and arrow keys move between messages.
@@ -1649,6 +1676,8 @@ function closeConvoSearch() {
 
 function runConvoSearch(q) {
   if (!q) { convoSearch = null; $('#convo-search-count').textContent = ''; renderMessages(); return; }
+  // A match may be well above the window; searching must be able to reach it.
+  renderWindow = Number.MAX_SAFE_INTEGER;
   const convo = db.getConvo(activeConvoId);
   const hits = visibleMessages(convo)
     .filter((m) => !m.deletedAt && m.text.toLowerCase().includes(q.toLowerCase()))
@@ -1778,6 +1807,26 @@ function syncSettingsInputs() {
   const pwRow = $('#btn-change-password').closest('.security-row');
   pwRow.hidden = !!me.isGuest;
   refreshStorageUsage();
+  reflectPushState();
+}
+
+/** The stored preference and the browser's actual subscription can disagree —
+    permission may have been revoked in site settings. Show what is true. */
+async function reflectPushState() {
+  const hint = $('#notif-permission-hint');
+  const box = $('#set-desktop-notifs');
+  if (!db.pushSupported()) {
+    hint.hidden = false;
+    hint.textContent = 'This browser cannot receive notifications while Relay is closed.';
+    return;
+  }
+  if (!box.checked) { hint.hidden = true; return; }
+  const live = await db.pushEnabled();
+  hint.hidden = live;
+  if (!live) {
+    hint.textContent = 'Notifications are on, but this device is not registered for them yet — '
+      + 'switch them off and on again to fix it.';
+  }
 }
 
 async function renderPasskeys() {
@@ -2003,9 +2052,22 @@ function wireSettings() {
       const key = el.dataset.setting;
       let value = el.type === 'checkbox' ? el.checked : el.value;
       if (el.type === 'range') value = Number(value);
-      if (key === 'desktopNotifs' && value === true) {
-        const ok = await ensureNotifPermission();
-        if (!ok) { el.checked = false; return; }
+      if (key === 'desktopNotifs') {
+        if (value === true) {
+          const ok = await ensureNotifPermission();
+          if (!ok) { el.checked = false; return; }
+          // Subscribing is what makes a notification arrive with the app closed.
+          try {
+            await db.enablePush();
+            $('#notif-permission-hint').hidden = true;
+          } catch (err) {
+            $('#notif-permission-hint').hidden = false;
+            $('#notif-permission-hint').textContent =
+              `Notifications will work while Relay is open, but not when it is closed: ${err.message}`;
+          }
+        } else {
+          await db.disablePush().catch(() => {});
+        }
       }
       setSetting(key, value);
       if (key === 'fontScale') $('#out-font-scale').textContent = `${value}%`;
@@ -2108,6 +2170,24 @@ function wireSettings() {
 
   for (const btn of $$('[data-close-dialog]')) {
     btn.addEventListener('click', () => btn.closest('dialog')?.close());
+  }
+}
+
+/** A notification tapped while the app was closed asks us to open a chat. */
+function wireNotificationOpens() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type !== 'open-conversation') return;
+    const convo = db.getConvo(e.data.convoId);
+    if (convo) openConvo(convo.id);
+  });
+
+  // And the same via the URL, when a new window had to be launched.
+  const wanted = new URLSearchParams(location.search).get('convo');
+  if (wanted && db.getConvo(wanted)) {
+    openConvo(wanted);
+    // Leave a clean address bar behind.
+    history.replaceState(null, '', location.pathname);
   }
 }
 
@@ -2651,6 +2731,7 @@ export function initUI(user, { onSignOut } = {}) {
   wireTouchMessageActions();
   wireVisualViewport();
   wireGroupDialog();
+  wireNotificationOpens();
   db.connect();
   db.watchConnectivity();
   db.watchPresence();

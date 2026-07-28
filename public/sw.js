@@ -96,3 +96,41 @@ function offlineResponse() {
     { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
   );
 }
+
+/* ---------- push notifications ---------- */
+
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  let payload = {};
+  try { payload = event.data.json(); } catch { payload = { title: 'Relay', body: event.data.text() }; }
+
+  const title = payload.title || 'Relay';
+  const options = {
+    body: payload.body || '',
+    icon: '/icon.svg',
+    badge: '/icon-maskable.svg',
+    // Collapse repeat notifications from one conversation into a single entry.
+    tag: payload.convoId || 'relay',
+    renotify: true,
+    data: { convoId: payload.convoId || null },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const convoId = event.notification.data?.convoId;
+  const target = convoId ? `/?convo=${encodeURIComponent(convoId)}` : '/';
+
+  event.waitUntil((async () => {
+    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    // Prefer focusing a tab that is already open over launching another.
+    for (const client of clientList) {
+      if (new URL(client.url).origin !== self.location.origin) continue;
+      await client.focus();
+      if (convoId && 'postMessage' in client) client.postMessage({ type: 'open-conversation', convoId });
+      return;
+    }
+    await self.clients.openWindow(target);
+  })());
+});
