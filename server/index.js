@@ -540,6 +540,28 @@ async function handleApi(req, res, url) {
     return send(res, 200, api.searchMessages(need(), url.searchParams.get('q'), url.searchParams.get('limit')));
   }
 
+  if (path === '/blocks' && method === 'GET') {
+    return send(res, 200, api.blockedUsers(need()));
+  }
+  if (path === '/blocks' && method === 'POST') {
+    return send(res, 200, api.blockUser(need(), body.userId));
+  }
+  if ((m = path.match(/^\/blocks\/([^/]+)$/)) && method === 'DELETE') {
+    return send(res, 200, api.unblockUser(need(), decodeURIComponent(m[1])));
+  }
+  if (path === '/reports' && method === 'POST') {
+    if (!auth.rateLimit(`report:${clientIp(req)}`, { limit: 20, windowMs: 60 * 60 * 1000 })) {
+      return fail(res, 429, 'Too many reports from this address. Try again later.');
+    }
+    return send(res, 201, api.submitReport(need(), body));
+  }
+  if (path === '/reports' && method === 'GET') {
+    return send(res, 200, api.listReports(need(), url.searchParams.get('status') || 'open'));
+  }
+  if ((m = path.match(/^\/reports\/([^/]+)$/)) && method === 'PATCH') {
+    return send(res, 200, api.resolveReport(need(), decodeURIComponent(m[1]), body.status));
+  }
+
   if (path === '/contacts' && method === 'POST') return send(res, 200, api.addContact(need(), body.contactId));
   if ((m = path.match(/^\/contacts\/([^/]+)$/)) && method === 'DELETE') {
     return send(res, 200, api.removeContact(need(), decodeURIComponent(m[1])));
@@ -615,6 +637,14 @@ export async function start({ port = PORT, dbFile = DB_FILE, uploadDir = UPLOAD_
   db.open(dbFile);
   await files.init(uploadDir);
   seedBots();
+  // One account can be marked administrator from the environment, so reports
+  // are readable without inventing a separate admin account system.
+  if (process.env.RELAY_ADMIN_EMAIL) {
+    try {
+      db.handle().prepare('UPDATE users SET is_admin = 1 WHERE email = ?')
+        .run(String(process.env.RELAY_ADMIN_EMAIL).trim().toLowerCase());
+    } catch { /* the account may not exist yet; it will on next boot */ }
+  }
   auth.pruneExpiredSessions();
   files.sweepOrphans().catch(() => { /* best effort */ });
   const sweeper = setInterval(() => files.sweepOrphans().catch(() => {}), 60 * 60 * 1000);

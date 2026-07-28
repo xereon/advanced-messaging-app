@@ -18,10 +18,30 @@ const bad = (msg) => { throw new HttpError(400, msg); };
 
 /* ---------- helpers ---------- */
 
+/**
+ * Membership, plus the block rule, for every route that touches a conversation.
+ *
+ * A block takes the direct conversation out of both snapshots, so everything
+ * else has to agree: history paging, reactions, receipts and typing all run
+ * through here. Without that, a client could keep working a thread the server
+ * has told it does not exist. Groups are deliberately unaffected — blocking is
+ * a direct-message tool, not a way to silence someone in a shared room.
+ *
+ * Both refusals use one message. A blocked person sees exactly what a stranger
+ * sees, so the response cannot be used to detect a block.
+ */
 function assertMember(convoId, userId) {
   const row = handle().prepare('SELECT 1 AS ok FROM members WHERE convo_id = ? AND user_id = ?')
     .get(convoId, userId);
-  if (!row) throw new HttpError(403, 'You are not a member of that conversation.');
+  if (!row) throw new HttpError(403, 'This conversation is not available.');
+
+  const convo = handle().prepare('SELECT type FROM conversations WHERE id = ?').get(convoId);
+  if (convo?.type !== 'dm') return;
+  const other = handle().prepare('SELECT user_id FROM members WHERE convo_id = ? AND user_id != ?')
+    .get(convoId, userId)?.user_id;
+  if (other && isBlockedBetween(userId, other)) {
+    throw new HttpError(403, 'This conversation is not available.');
+  }
 }
 
 function ownMessage(msgId, userId) {
@@ -46,7 +66,7 @@ function reactionsFor(msgIds) {
   return out;
 }
 
-function loadMessages(convoId, { limit = HISTORY_LIMIT, beforeSeq = null } = {}) {
+function loadMessages(convoId, { limit = HISTORY_LIMIT, beforeSeq = null, hidden = null } = {}) {
   const rows = beforeSeq
     ? handle().prepare(
       'SELECT * FROM messages WHERE convo_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?',
@@ -55,10 +75,13 @@ function loadMessages(convoId, { limit = HISTORY_LIMIT, beforeSeq = null } = {})
       'SELECT * FROM messages WHERE convo_id = ? ORDER BY seq DESC LIMIT ?',
     ).all(convoId, limit).reverse();
 
-  const ids = rows.map((r) => r.id);
+  // Blocking hides history as well as new arrivals — otherwise the person you
+  // blocked stays visible in every group you share.
+  const visible = hidden?.size ? rows.filter((r) => !hidden.has(r.from_id)) : rows;
+  const ids = visible.map((r) => r.id);
   const reactions = reactionsFor(ids);
   const attachments = files.forMessages(ids);
-  return rows.map((r) => ({
+  return visible.map((r) => ({
     ...shapeMessage(r, reactions[r.id] || {}),
     attachments: attachments[r.id] || [],
   }));
@@ -68,7 +91,9 @@ function loadMessages(convoId, { limit = HISTORY_LIMIT, beforeSeq = null } = {})
 export function history(me, convoId, { beforeSeq, limit }) {
   assertMember(convoId, me.id);
   const capped = Math.min(Math.max(Number(limit) || 50, 1), HISTORY_LIMIT);
-  const messages = loadMessages(convoId, { limit: capped, beforeSeq: Number(beforeSeq) || null });
+  const messages = loadMessages(convoId, {
+    limit: capped, beforeSeq: Number(beforeSeq) || null, hidden: blockedIdsFor(me.id),
+  });
   const oldest = handle().prepare('SELECT MIN(seq) AS s FROM messages WHERE convo_id = ?').get(convoId)?.s ?? null;
   const hasMore = messages.length > 0 && oldest !== null && messages[0].seq > oldest;
   return { messages, hasMore };
@@ -111,10 +136,17 @@ export function bootstrap(me) {
   const hasMore = {};
   const reads = {};
   const meta = {};
+  const hidden = blockedIdsFor(me.id);
 
   for (const row of convoRows) {
+    // A direct conversation with someone blocked is not shown at all.
+    if (row.type === 'dm') {
+      const other = db.prepare('SELECT user_id FROM members WHERE convo_id = ? AND user_id != ?')
+        .get(row.id, me.id)?.user_id;
+      if (other && hidden.has(other)) continue;
+    }
     conversations.push(convoWithMembers(row));
-    messages[row.id] = loadMessages(row.id);
+    messages[row.id] = loadMessages(row.id, { hidden });
     const oldest = db.prepare('SELECT MIN(seq) AS s FROM messages WHERE convo_id = ?').get(row.id)?.s ?? null;
     hasMore[row.id] = messages[row.id].length > 0 && oldest !== null && messages[row.id][0].seq > oldest;
     reads[row.id] = Object.fromEntries(
@@ -149,6 +181,7 @@ export function bootstrap(me) {
     reads,
     meta,
     contacts: db.prepare('SELECT contact_id FROM contacts WHERE user_id = ?').all(me.id).map((r) => r.contact_id),
+    blocked: blockedList(me.id),
     settings: settingsRow ? JSON.parse(settingsRow.json) : null,
     online: rt.onlineUserIds(),
     seq: currentSeq(),
@@ -168,6 +201,7 @@ export function bootstrap(me) {
 export function searchUsers(me, q) {
   const db = handle();
   const needle = `%${String(q || '').trim().toLowerCase()}%`;
+  const hidden = blockedIdsFor(me.id);
   const rows = db.prepare(`
     SELECT * FROM users
      WHERE id != ? AND retired = 0
@@ -181,11 +215,14 @@ export function searchUsers(me, q) {
      WHERE m1.user_id = ?
     UNION SELECT contact_id AS id FROM contacts WHERE user_id = ?`).all(me.id, me.id).map((r) => r.id));
 
-  return rows.map((row) => {
-    const user = publicUser(row);
-    if (!row.is_bot && !known.has(row.id)) user.email = null;
-    return user;
-  });
+  return rows
+    // Someone you blocked, or who blocked you, is simply not in the directory.
+    .filter((row) => !hidden.has(row.id))
+    .map((row) => {
+      const user = publicUser(row);
+      if (!row.is_bot && !known.has(row.id)) user.email = null;
+      return user;
+    });
 }
 
 /* ---------- conversations ---------- */
@@ -210,6 +247,9 @@ export function createConversation(me, { type, title, members }) {
 
   if (type === 'dm') {
     if (ids.length !== 2) bad('A direct message must have exactly two people.');
+    // Neither side can open a thread across a block. Refusing here means the
+    // client never gets a conversation it would immediately fail to post to.
+    if (isBlockedBetween(ids[0], ids[1])) throw new HttpError(403, 'This conversation is not available.');
     const existing = handle().prepare('SELECT 1 AS ok FROM conversations WHERE id = ?').get(dmId(ids[0], ids[1]));
     const convo = convoWithMembers(ensureDm(ids[0], ids[1]));
     return existing ? convo : announce(convo);
@@ -225,6 +265,125 @@ export function createConversation(me, { type, title, members }) {
     for (const uid of ids) ins.run(id, uid);
   });
   return announce(convoWithMembers(db.prepare('SELECT * FROM conversations WHERE id = ?').get(id)));
+}
+
+/* ---------- blocking ---------- */
+
+/**
+ * Everyone in a block relationship with this account, in either direction.
+ *
+ * Enforcement is symmetric on purpose. If it only worked one way, blocking
+ * someone would stop them reaching you but leave you seeing their messages —
+ * and the person you blocked could tell, because their view would change.
+ */
+export function blockedIdsFor(userId) {
+  const rows = handle().prepare(
+    `SELECT blocked_id AS id FROM blocks WHERE user_id = ?
+     UNION SELECT user_id AS id FROM blocks WHERE blocked_id = ?`,
+  ).all(userId, userId);
+  return new Set(rows.map((r) => r.id));
+}
+
+export function isBlockedBetween(a, b) {
+  return !!handle().prepare(
+    `SELECT 1 AS ok FROM blocks
+      WHERE (user_id = ? AND blocked_id = ?) OR (user_id = ? AND blocked_id = ?) LIMIT 1`,
+  ).get(a, b, b, a);
+}
+
+export function blockUser(me, targetId) {
+  if (targetId === me.id) bad('You cannot block yourself.');
+  const target = auth.findById(targetId);
+  if (!target) throw new HttpError(404, 'No such person.');
+
+  handle().prepare('INSERT OR IGNORE INTO blocks (user_id, blocked_id, created_at) VALUES (?,?,?)')
+    .run(me.id, targetId, Date.now());
+  // Blocking implies you no longer want them as a contact.
+  handle().prepare('DELETE FROM contacts WHERE user_id = ? AND contact_id = ?').run(me.id, targetId);
+
+  // Both sides need their view rebuilt; neither is told why.
+  rt.publish([me.id], 'blocks', { blocked: blockedList(me.id) });
+  rt.publish([targetId], 'refresh', {});
+  return { blocked: blockedList(me.id) };
+}
+
+export function unblockUser(me, targetId) {
+  handle().prepare('DELETE FROM blocks WHERE user_id = ? AND blocked_id = ?').run(me.id, targetId);
+  rt.publish([me.id], 'blocks', { blocked: blockedList(me.id) });
+  rt.publish([targetId], 'refresh', {});
+  return { blocked: blockedList(me.id) };
+}
+
+/** Only the people *you* blocked — not the ones who blocked you. */
+export function blockedList(userId) {
+  return handle().prepare('SELECT blocked_id FROM blocks WHERE user_id = ?')
+    .all(userId).map((r) => r.blocked_id);
+}
+
+/**
+ * The block list with names attached.
+ *
+ * Blocking hides someone everywhere else, which would otherwise leave no route
+ * back to the profile that holds the Unblock button. This is that route, and it
+ * is the one place a blocked account is still named — to the person who blocked
+ * them, who already knows.
+ */
+export function blockedUsers(me) {
+  const rows = handle().prepare(
+    `SELECT u.* FROM blocks b JOIN users u ON u.id = b.blocked_id
+      WHERE b.user_id = ? ORDER BY b.created_at DESC`,
+  ).all(me.id);
+  return { blocked: rows.map(publicUser) };
+}
+
+/* ---------- reporting ---------- */
+
+const REPORT_REASONS = new Set(['spam', 'harassment', 'impersonation', 'inappropriate', 'other']);
+
+export function submitReport(me, { subjectId, convoId, messageId, reason, note }) {
+  if (!REPORT_REASONS.has(reason)) bad('Choose a reason.');
+  const subject = auth.findById(subjectId);
+  if (!subject) throw new HttpError(404, 'No such person.');
+  if (subjectId === me.id) bad('You cannot report yourself.');
+
+  // Snapshot the message, if one was cited and the reporter can actually see it.
+  let messageText = null;
+  if (messageId) {
+    const row = handle().prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+    if (row) {
+      assertMember(row.convo_id, me.id);
+      messageText = row.text;
+    }
+  }
+
+  const id = auth.uid('r');
+  handle().prepare(
+    `INSERT INTO reports (id, reporter_id, subject_id, convo_id, message_id, message_text,
+                          reason, note, status, created_at)
+     VALUES (?,?,?,?,?,?,?,?,'open',?)`,
+  ).run(id, me.id, subjectId, convoId || null, messageId || null, messageText,
+    reason, String(note || '').slice(0, 1000) || null, Date.now());
+
+  return { id, ok: true };
+}
+
+export function listReports(me, status = 'open') {
+  if (!me.is_admin) throw new HttpError(403, 'Reports are only visible to an administrator.');
+  const rows = handle().prepare(
+    `SELECT r.*, reporter.name AS reporter_name, subject.name AS subject_name
+       FROM reports r
+       LEFT JOIN users reporter ON reporter.id = r.reporter_id
+       LEFT JOIN users subject ON subject.id = r.subject_id
+      WHERE r.status = ? ORDER BY r.created_at DESC LIMIT 200`,
+  ).all(status);
+  return { reports: rows };
+}
+
+export function resolveReport(me, id, status) {
+  if (!me.is_admin) throw new HttpError(403, 'Reports are only visible to an administrator.');
+  if (!['open', 'reviewed', 'actioned', 'dismissed'].includes(status)) bad('Unknown status.');
+  handle().prepare('UPDATE reports SET status = ? WHERE id = ?').run(status, id);
+  return { ok: true };
 }
 
 /* ---------- group management ---------- */
@@ -359,6 +518,7 @@ async function pushToAbsentMembers(convoId, sender, msg) {
       } catch { /* malformed settings should not silence someone */ }
     }
 
+    if (isBlockedBetween(sender.id, userId)) return;
     await push.notify(userId, {
       title: convo?.type === 'group' ? `${sender.name} in ${convo.title}` : sender.name,
       body: preview,
@@ -387,10 +547,12 @@ export function searchMessages(me, q, limit = 40) {
       JOIN conversations c ON c.id = m.convo_id
       LEFT JOIN convo_meta meta ON meta.convo_id = m.convo_id AND meta.user_id = ?
      WHERE m.deleted_at IS NULL
+       AND m.from_id NOT IN (SELECT blocked_id FROM blocks WHERE user_id = ?)
+       AND m.from_id NOT IN (SELECT user_id FROM blocks WHERE blocked_id = ?)
        AND LOWER(m.text) LIKE ?
        AND m.at > IFNULL(meta.cleared_before, 0)
      ORDER BY m.at DESC
-     LIMIT ?`).all(me.id, me.id, like, capped);
+     LIMIT ?`).all(me.id, me.id, me.id, me.id, like, capped);
 
   return {
     results: rows.map((r) => ({
@@ -404,7 +566,8 @@ export function searchMessages(me, q, limit = 40) {
 /* ---------- messages ---------- */
 
 export function sendMessage(me, convoId, { text, replyTo, clientId, attachmentIds = [] }) {
-  assertMember(convoId, me.id);
+  assertMember(convoId, me.id);   // also closes a direct conversation with a block
+
   const clean = String(text ?? '').trim();
   const wanted = Array.isArray(attachmentIds) ? attachmentIds.filter((x) => typeof x === 'string') : [];
   if (!clean && !wanted.length) bad('Message is empty.');
@@ -431,7 +594,11 @@ export function sendMessage(me, convoId, { text, replyTo, clientId, attachmentId
 
   const attachments = wanted.length ? files.attach(wanted, id, convoId, me.id) : [];
   const msg = { ...shapeMessage(row), attachments };
-  rt.publish(rt.convoAudience(convoId), 'message', { message: msg, clientId });
+  // In a shared group both people stay members, but neither receives the
+  // other's messages.
+  const blocked = blockedIdsFor(me.id);
+  const audience = rt.convoAudience(convoId).filter((u) => u === me.id || !blocked.has(u));
+  rt.publish(audience, 'message', { message: msg, clientId });
   scheduleBotReply(convoId, msg);
   // Fire and forget: a slow push service must not delay the sender's response.
   pushToAbsentMembers(convoId, me, msg).catch(() => {});
@@ -634,6 +801,13 @@ export function getProfile(me, userId) {
   const isContact = !!db.prepare('SELECT 1 AS ok FROM contacts WHERE user_id = ? AND contact_id = ?')
     .get(me.id, userId);
 
+  const iBlockedThem = !!db.prepare('SELECT 1 AS ok FROM blocks WHERE user_id = ? AND blocked_id = ?')
+    .get(me.id, userId);
+  const theyBlockedMe = !!db.prepare('SELECT 1 AS ok FROM blocks WHERE user_id = ? AND blocked_id = ?')
+    .get(userId, me.id);
+  // Being blocked is not disclosed: to you it simply looks like they are gone.
+  if (theyBlockedMe && !iBlockedThem) throw new HttpError(404, 'No such person.');
+
   const user = publicUser(row);
   if (!row.is_bot && !shared.length && !isContact && row.id !== me.id) user.email = null;
 
@@ -641,6 +815,7 @@ export function getProfile(me, userId) {
     user,
     isSelf: row.id === me.id,
     isContact,
+    isBlocked: iBlockedThem,
     online: rt.isOnline(row.id) || !!row.is_bot,
     sharedConversations: shared.map((c) => ({ id: c.id, type: c.type, title: c.title })),
     directConversationId: shared.find((c) => c.type === 'dm')?.id || null,

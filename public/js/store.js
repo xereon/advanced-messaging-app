@@ -44,6 +44,8 @@ export function hydrate(boot) {
   for (const [id, map] of Object.entries(boot.reads)) reads.set(id, map);
   for (const [id, m] of Object.entries(boot.meta)) metas.set(id, m);
   for (const id of boot.contacts) contacts.add(id);
+  blocked.clear();
+  for (const id of boot.blocked || []) blocked.add(id);
   for (const id of boot.online) online.add(id);
   serverSettings = boot.settings;
 
@@ -365,6 +367,33 @@ export const exportData = () => api.exportData();
 export const searchDirectory = (q) => api.searchUsers(q);
 export const searchMessages = (q) => api.searchMessages(q);
 
+/* ---------- blocking ---------- */
+
+const blocked = new Set();
+
+export const blockedIds = () => [...blocked];
+export const isBlocked = (userId) => blocked.has(userId);
+
+export async function blockUser(userId) {
+  const { blocked: list } = await api.blockUser(userId);
+  blocked.clear();
+  for (const id of list) blocked.add(id);
+  // Blocking changes what exists: conversations and history both shift.
+  await resync();
+  emit('blocks', { blocked: [...blocked] });
+}
+
+export async function unblockUser(userId) {
+  const { blocked: list } = await api.unblockUser(userId);
+  blocked.clear();
+  for (const id of list) blocked.add(id);
+  await resync();
+  emit('blocks', { blocked: [...blocked] });
+}
+
+export const blockedUsers = () => api.blockedUsers();
+export const submitReport = (payload) => api.submitReport(payload);
+
 /* ---------- push notifications ---------- */
 
 const urlBase64ToUint8Array = (base64) => {
@@ -500,6 +529,14 @@ export function connect() {
       emit('conversations', {});
     },
     user: ({ user }) => { cacheUser(user); emit('users', { user }); },
+    blocks: ({ blocked: list }) => {
+      blocked.clear();
+      for (const id of list) blocked.add(id);
+      emit('blocks', { blocked: list });
+    },
+    // Sent to the person on the other side of a block. Deliberately says
+    // nothing about what changed.
+    refresh: () => { resync().catch(() => {}); },
     'conversation-removed': ({ convoId }) => {
       convos.delete(convoId);
       messages.delete(convoId);

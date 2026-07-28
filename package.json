@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test --test-concurrency=1 'test/**/*.test.js'"
+    "test": "node --test --test-concurrency=1 'test/**/*.test.js'",
+    "reports": "node scripts/reports.js"
   }
 }

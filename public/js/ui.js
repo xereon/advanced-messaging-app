@@ -424,6 +424,87 @@ function paintProfile(profile, { partial }) {
     contactBtn.textContent = 'Edit profile';
     contactBtn.onclick = () => { $('#profile-dialog').close(); openSettings('profile'); };
   }
+
+  paintSafety(profile);
+}
+
+/**
+ * The block/report row.
+ *
+ * Blocking is symmetric on the server, so the copy says what actually happens
+ * rather than promising one-way invisibility. Bots and retired guests have
+ * nobody to report, so they get no row at all.
+ */
+function paintSafety(profile) {
+  const { user, isSelf } = profile;
+  const wrap = $('#profile-safety');
+  const show = !isSelf && !user.isBot && !user.retired;
+  wrap.hidden = !show;
+  if (!show) return;
+
+  const blocked = profile.isBlocked ?? db.isBlocked(user.id);
+  const note = $('#profile-block-note');
+  note.hidden = !blocked;
+  note.textContent = blocked
+    ? `You blocked ${user.name}. Neither of you can message the other, and your conversation is hidden while the block stands.`
+    : '';
+
+  const blockBtn = $('#profile-block-btn');
+  blockBtn.textContent = blocked ? 'Unblock' : 'Block';
+  blockBtn.onclick = async () => {
+    if (!blocked) {
+      const ok = await confirmDialog(
+        `Block ${user.name}?`,
+        'You will stop seeing each other in search and neither of you can start a conversation. Your existing messages are hidden, not deleted — unblocking brings them back.',
+        'Block',
+      );
+      if (!ok) return;
+    }
+    blockBtn.disabled = true;
+    try {
+      if (blocked) {
+        await db.unblockUser(user.id);
+        toast(`${user.name} is unblocked.`, 'success');
+      } else {
+        await db.blockUser(user.id);
+        toast(`${user.name} is blocked.`, 'success');
+        $('#profile-dialog').close();
+        renderSidebar();
+        return;
+      }
+      const fresh = await db.fetchProfile(user.id);
+      paintProfile(fresh, { partial: false });
+      renderSidebar();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      blockBtn.disabled = false;
+    }
+  };
+
+  $('#profile-report-btn').onclick = () => {
+    $('#profile-dialog').close();
+    openReport({ subjectId: user.id, subjectName: user.name });
+  };
+}
+
+/* ================= reporting ================= */
+
+let reportTarget = null;
+
+/** Report a person, or one specific message of theirs. */
+function openReport({ subjectId, subjectName, convoId = null, messageId = null, messageText = '' }) {
+  reportTarget = { subjectId, convoId, messageId };
+  $('#report-dialog-title').textContent = messageId ? 'Report this message' : `Report ${subjectName || 'this person'}`;
+  const quote = $('#report-quote');
+  quote.hidden = !messageText;
+  quote.textContent = messageText || '';
+  $('#report-note').value = '';
+  $('#report-also-block').checked = false;
+  const first = $('#report-form input[name="report-reason"]');
+  if (first) first.checked = true;
+  hideErr('#report-error');
+  $('#report-dialog').showModal();
 }
 
 function lastSeenLabel(user) {
@@ -1237,6 +1318,16 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
           }
         }),
       );
+    } else if (!db.getUser(m.from)?.isBot) {
+      actions.append(
+        mkBtn('alert', 'Report message', () => openReport({
+          subjectId: m.from,
+          subjectName: db.getUser(m.from)?.name,
+          convoId: convo.id,
+          messageId: m.id,
+          messageText: m.text,
+        })),
+      );
     }
     el.append(actions);
   }
@@ -1808,6 +1899,64 @@ function syncSettingsInputs() {
   pwRow.hidden = !!me.isGuest;
   refreshStorageUsage();
   reflectPushState();
+  renderBlockedList();
+}
+
+/**
+ * The block list in Settings → Data & privacy.
+ *
+ * Once someone is blocked they are gone from search and from the conversation
+ * list, so the profile card that holds the Unblock button is unreachable. This
+ * is the way back.
+ */
+async function renderBlockedList() {
+  const list = $('#blocked-list');
+  list.innerHTML = '';
+  let people;
+  try {
+    ({ blocked: people } = await db.blockedUsers());
+  } catch {
+    const li = document.createElement('li');
+    li.className = 'hint';
+    li.textContent = 'Could not load your block list.';
+    list.append(li);
+    return;
+  }
+
+  if (!people.length) {
+    const li = document.createElement('li');
+    li.className = 'hint';
+    li.textContent = 'You have not blocked anyone.';
+    list.append(li);
+    return;
+  }
+
+  for (const user of people) {
+    const row = document.createElement('li');
+    row.className = 'member-row';
+    const name = document.createElement('span');
+    name.className = 'member-name';
+    name.textContent = user.name;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn sm';
+    btn.textContent = 'Unblock';
+    btn.setAttribute('aria-label', `Unblock ${user.name}`);
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await db.unblockUser(user.id);
+        toast(`${user.name} is unblocked.`, 'success');
+        renderBlockedList();
+        renderSidebar();
+      } catch (err) {
+        toast(err.message, 'error');
+        btn.disabled = false;
+      }
+    });
+    row.append(avatarEl(user), name, btn);
+    list.append(row);
+  }
 }
 
 /** The stored preference and the browser's actual subscription can disagree —
@@ -1993,6 +2142,26 @@ function wireProfileOpeners() {
   for (const btn of $$('[data-close-dialog]')) {
     btn.addEventListener('click', () => btn.closest('dialog')?.close());
   }
+
+  $('#report-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!reportTarget) return;
+    const btn = e.target.querySelector('button[type="submit"]');
+    const reason = $('#report-form input[name="report-reason"]:checked')?.value;
+    const alsoBlock = $('#report-also-block').checked;
+    btn.disabled = true;
+    try {
+      await db.submitReport({ ...reportTarget, reason, note: $('#report-note').value.trim() });
+      if (alsoBlock) await db.blockUser(reportTarget.subjectId);
+      $('#report-dialog').close();
+      renderSidebar();
+      toast(alsoBlock ? 'Report sent, and they are blocked.' : 'Report sent. Thank you.', 'success');
+    } catch (err) {
+      showErr('#report-error', err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 function wireProfilePanel() {
@@ -2446,7 +2615,16 @@ function wireStoreEvents() {
   db.on('error', ({ message }) => toast(message, 'error'));
   db.on('resynced', () => {
     renderSidebar();
-    if (activeConvoId && db.getConvo(activeConvoId)) renderMessages();
+    refreshUnreadBadge();
+    if (!activeConvoId) return;
+    // A block on either side takes the conversation away. Leaving it open would
+    // show a thread you can no longer post to.
+    if (db.getConvo(activeConvoId)) renderMessages();
+    else closeConvoToList();
+  });
+  db.on('blocks', () => {
+    renderSidebar();
+    if ($('#new-chat-dialog').open) renderDirectory($('#new-chat-search').value);
   });
 
   // A dropped stream means we may have missed events; resync on the way back.

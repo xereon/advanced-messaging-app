@@ -509,6 +509,10 @@
       </section>
 
       <section class="settings-panel" data-panel="data" hidden aria-label="Data and privacy settings">
+        <h3>Blocked people</h3>
+        <p class="hint">Blocking is mutual: neither of you can message the other, and you disappear from each other's search results. Your old messages are hidden, not deleted.</p>
+        <ul class="blocked-list" id="blocked-list" aria-live="polite"></ul>
+
         <h3>Your data</h3>
         <p class="hint">Relay stores your account on its own server. No third-party tracking, no analytics.</p>
         <div class="security-row">
@@ -605,6 +609,14 @@
     <p class="profile-bio" id="profile-bio" hidden></p>
     <dl class="profile-facts" id="profile-facts"></dl>
     <div id="profile-shared"></div>
+    <div class="profile-safety" id="profile-safety" hidden>
+      <h4 class="profile-subhead">Safety</h4>
+      <p class="hint" id="profile-block-note" hidden></p>
+      <div class="profile-safety-actions">
+        <button class="btn subtle" id="profile-block-btn" type="button"></button>
+        <button class="btn subtle" id="profile-report-btn" type="button">Report</button>
+      </div>
+    </div>
   </div>
   <footer class="dialog-footer">
     <button class="btn" id="profile-contact-btn" type="button"></button>
@@ -685,6 +697,36 @@
     <footer class="dialog-footer">
       <button type="button" class="btn" data-close-dialog>Cancel</button>
       <button type="submit" class="btn primary">Update password</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Report someone -->
+<dialog id="report-dialog" class="dialog sm-dialog" aria-labelledby="report-dialog-title">
+  <header class="dialog-header">
+    <h2 id="report-dialog-title">Report</h2>
+    <button class="btn icon-btn" data-close-dialog aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <form id="report-form" class="dialog-body" method="post" action="/api/auth/no-script" novalidate>
+    <p class="hint" id="report-intro">Reports go to the people who run this server. Nobody is told that you reported them.</p>
+    <blockquote class="report-quote" id="report-quote" hidden></blockquote>
+    <fieldset class="report-reasons">
+      <legend>What's wrong?</legend>
+      <label class="radio-row"><input type="radio" name="report-reason" value="spam" checked><span>Spam or scam</span></label>
+      <label class="radio-row"><input type="radio" name="report-reason" value="harassment"><span>Harassment or abuse</span></label>
+      <label class="radio-row"><input type="radio" name="report-reason" value="impersonation"><span>Pretending to be someone else</span></label>
+      <label class="radio-row"><input type="radio" name="report-reason" value="inappropriate"><span>Inappropriate content</span></label>
+      <label class="radio-row"><input type="radio" name="report-reason" value="other"><span>Something else</span></label>
+    </fieldset>
+    <div class="field">
+      <label for="report-note">Anything to add? <span class="hint">(optional)</span></label>
+      <textarea id="report-note" rows="3" maxlength="1000"></textarea>
+    </div>
+    <label class="check-row"><input type="checkbox" id="report-also-block"><span>Block them as well</span></label>
+    <p class="field-error" id="report-error" role="alert" hidden></p>
+    <footer class="dialog-footer">
+      <button type="button" class="btn" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn primary">Send report</button>
     </footer>
   </form>
 </dialog>

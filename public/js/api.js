@@ -53,6 +53,10 @@ export const pushSubscribe = (subscription) => post('/push/subscribe', subscript
 export const pushUnsubscribe = (endpoint) => del('/push/subscribe', { endpoint });
 export const searchUsers = (q) => get(`/users?q=${encodeURIComponent(q || '')}`);
 export const getProfile = (userId) => get(`/users/${encodeURIComponent(userId)}`);
+export const blockedUsers = () => get('/blocks');
+export const blockUser = (userId) => post('/blocks', { userId });
+export const unblockUser = (userId) => del(`/blocks/${encodeURIComponent(userId)}`);
+export const submitReport = (payload) => post('/reports', payload);
 export const requestReset = (email) => post('/auth/reset/request', { email });
 export const confirmReset = (email, code, password) => post('/auth/reset/confirm', { email, code, password });
 export const renameGroup = (convoId, title) => patch(`/conversations/${encodeURIComponent(convoId)}`, { title });

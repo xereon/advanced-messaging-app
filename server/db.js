@@ -151,6 +151,32 @@ function migrate() {
       PRIMARY KEY (convo_id, user_id)
     );
 
+    -- Blocking is stored one-directional but enforced both ways: if either
+    -- party has blocked the other, nothing should pass between them.
+    CREATE TABLE IF NOT EXISTS blocks (
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      blocked_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at  INTEGER NOT NULL,
+      PRIMARY KEY (user_id, blocked_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id);
+
+    CREATE TABLE IF NOT EXISTS reports (
+      id           TEXT PRIMARY KEY,
+      reporter_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+      subject_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+      convo_id     TEXT,
+      message_id   TEXT,
+      -- Kept verbatim: the message may be edited or deleted after the report,
+      -- and a report about vanished evidence is not much use.
+      message_text TEXT,
+      reason       TEXT NOT NULL,
+      note         TEXT,
+      status       TEXT NOT NULL DEFAULT 'open',
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at);
+
     CREATE TABLE IF NOT EXISTS contacts (
       user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       contact_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -226,6 +252,7 @@ function migrate() {
   // CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
   // columns added after the first release need their own step.
   addColumns('messages', { system: 'INTEGER NOT NULL DEFAULT 0' });
+  addColumns('users', { is_admin: 'INTEGER NOT NULL DEFAULT 0' });
   addColumns('users', {
     pronouns: 'TEXT',
     title: 'TEXT',
@@ -290,6 +317,7 @@ export function publicUser(row) {
     createdAt: row.created_at,
     lastSeen: row.last_seen,
     hasPin: !!row.pin_hash,
+    isAdmin: !!row.is_admin,
     pronouns: row.pronouns || null,
     title: row.title || null,
     bio: row.bio || null,

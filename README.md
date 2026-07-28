@@ -165,6 +165,7 @@ Schedule it with cron: `15 3 * * * /srv/relay/deploy/backup.sh /var/backups/rela
 | `RELAY_ORIGIN` | unset | Extra allowed WebAuthn origin, if the public origin differs from `Host` |
 | `RELAY_RATE_LIMIT` | on | Set to `off` to disable rate limiting (tests only) |
 | `RELAY_SCAN_COMMAND` | unset | External virus scanner for uploads; a non-zero exit rejects the file |
+| `RELAY_ADMIN_EMAIL` | unset | Account marked administrator on boot; the only one that can read abuse reports over the API |
 | `RELAY_VAPID_PUBLIC` / `RELAY_VAPID_PRIVATE` | generated | Web Push identity. Generated once and stored on first use; set these to pin it. Changing them invalidates every existing subscription |
 | `RELAY_VAPID_SUBJECT` | `mailto:admin@localhost` | Contact address push services can use to reach you |
 | `RELAY_DEMO_BOTS` | on | Set to `0` on a real deployment. Otherwise four fictional colleagues appear in every new account's conversation list and in search — charming as a demo, odd for strangers signing up on your domain. |
@@ -330,6 +331,37 @@ they are awake, groups you have in common, and buttons to message them or add
 them as a contact. You edit your own under **Settings → Profile**, with a live
 preview of the card other people will see.
 
+**Blocking and reporting.** Any profile card carries a Safety row, and any
+message somebody else sent carries a Report action that quotes it.
+
+Blocking is **mutual and enforced server-side on every route**, not just on
+send. The direct conversation leaves both snapshots, its history stops loading,
+both names drop out of people search, their messages drop out of message search,
+push is suppressed, and neither side can reopen the thread. Nothing is deleted —
+unblocking restores the conversation and every message in it. Shared groups are
+deliberately untouched: blocking is a direct-message tool, not a way to silence
+someone in a room you both belong to.
+
+The block is not disclosed to the person blocked. Refusals reuse the same
+message a stranger would get, their profile request 404s exactly as a deleted
+account would, and the live nudge that tells their client to redraw carries an
+empty payload. Because a blocked account then disappears everywhere, the
+**Settings → Data & privacy** panel lists who you have blocked and is the way
+to undo it.
+
+Reports capture a reason, an optional note, and a *snapshot* of the reported
+message, so evidence survives the sender deleting it. You cannot cite a message
+from a conversation you are not in. Reports are read and resolved from the
+command line:
+
+```bash
+npm run reports
+```
+
+`npm run reports -- --status all` shows resolved ones too, and
+`npm run reports -- --resolve <id> --status actioned` closes one. Setting
+`RELAY_ADMIN_EMAIL` also lets that account read them over the API.
+
 History loads the most recent 200 messages per conversation, with a **Load
 earlier messages** control that pages backwards while holding your reading
 position steady.
@@ -406,8 +438,10 @@ Worth naming rather than hiding:
   straightforward and worth doing; true end-to-end encryption is a different
   product — it would break server-side search and needs cross-device key
   management.
-- **No blocking or reporting.** Registration is open and anyone can find and
-  message anyone, with no way to block them. This is the next thing I would fix.
+- **Moderation has no web screen.** Blocking and reporting both work — see
+  below — but reports are read and resolved from the command line
+  (`npm run reports`), not from an admin page. That is the next thing I would
+  build.
 - **One database.** SQLite with WAL handles a busy small deployment comfortably,
   and the event bus and presence now work across worker processes, but nothing
   here shards or replicates.

@@ -205,13 +205,18 @@ export function publish(userIds, type, data) {
 
 /** Everyone who shares a conversation with this user, plus the user. */
 export function contactAudience(userId) {
+  // Presence must not flow between people who have blocked each other.
+  const blocked = new Set(handle().prepare(
+    `SELECT blocked_id AS id FROM blocks WHERE user_id = ?
+     UNION SELECT user_id AS id FROM blocks WHERE blocked_id = ?`,
+  ).all(userId, userId).map((r) => r.id));
   const rows = handle().prepare(
     `SELECT DISTINCT m2.user_id AS id FROM members m1
        JOIN members m2 ON m2.convo_id = m1.convo_id
       WHERE m1.user_id = ?
      UNION SELECT user_id AS id FROM contacts WHERE contact_id = ?`,
   ).all(userId, userId);
-  return [...new Set([userId, ...rows.map((r) => r.id)])];
+  return [...new Set([userId, ...rows.map((r) => r.id)])].filter((id) => id === userId || !blocked.has(id));
 }
 
 export function convoAudience(convoId) {
