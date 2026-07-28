@@ -58,6 +58,7 @@ function wirePasswordToggle(btnSel, inputSel) {
 
 wirePasswordToggle('#toggle-signin-pw', '#signin-password');
 wirePasswordToggle('#toggle-signup-pw', '#signup-password');
+wirePasswordToggle('#toggle-reset-pw', '#reset-password');
 
 for (const btn of $$('[data-goto]')) {
   btn.addEventListener('click', () => showView(btn.dataset.goto));
@@ -147,11 +148,72 @@ $('#magic-form').addEventListener('submit', async (e) => {
 
 $('#magic-resend').addEventListener('click', magicSend);
 
-/* ---------- passkey (pending real WebAuthn verification) ---------- */
+/* ---------- password reset ---------- */
 
-$('#btn-passkey').addEventListener('click', () => {
-  fieldError('#signin-email-err',
-    'Passkey sign-in is not available yet — it needs server-side WebAuthn verification. Use your password or an email code.');
+$('#reset-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const onCodeStep = !$('[data-reset-step="2"]').hidden;
+  const email = $('#reset-email').value.trim();
+
+  if (!onCodeStep) {
+    fieldError('#reset-email-err');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return fieldError('#reset-email-err', 'Enter a valid email address.');
+    }
+    try {
+      const res = await api.requestReset(email);
+      $('[data-reset-step="1"]').hidden = true;
+      $('[data-reset-step="2"]').hidden = false;
+      if (res.delivery === 'demo-inbox') {
+        $('#reset-demo-inbox').hidden = false;
+        $('#reset-demo-code').textContent = res.code;
+      } else {
+        // Either it was emailed, or the address is not registered — the server
+        // deliberately does not say which.
+        $('#reset-sent-note').hidden = false;
+        $('#reset-sent-note').textContent = res.to
+          ? `If that address is registered, a code is on its way to ${res.to}.`
+          : 'If that address is registered, a code is on its way.';
+      }
+      $('#reset-code').focus();
+    } catch (err) {
+      fieldError('#reset-email-err', err.message);
+    }
+    return;
+  }
+
+  fieldError('#reset-err');
+  const password = $('#reset-password').value;
+  if (password.length < 8) return fieldError('#reset-err', 'Password must be at least 8 characters.');
+  try {
+    const { user } = await api.confirmReset(email, $('#reset-code').value, password);
+    await enterApp(user);
+  } catch (err) {
+    fieldError('#reset-err', err.message);
+  }
+});
+
+/* ---------- passkey ---------- */
+
+$('#btn-passkey').addEventListener('click', async (e) => {
+  fieldError('#signin-email-err');
+  if (!api.passkeysSupported()) {
+    return fieldError('#signin-email-err',
+      'Passkeys need a secure context. Use localhost or HTTPS, or sign in with your password.');
+  }
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const { user } = await api.passkeySignIn();
+    await enterApp(user);
+  } catch (err) {
+    // Cancelling the browser prompt is not an error worth shouting about.
+    if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
+      fieldError('#signin-email-err', err.message || 'Passkey sign-in failed.');
+    }
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 /* ---------- guest ---------- */
@@ -199,6 +261,18 @@ function renderPinUnlock() {
         fieldError('#signin-password-err', err.message);
       }
     }
+  });
+}
+
+/* ---------- installable app ---------- */
+
+if ('serviceWorker' in navigator) {
+  // Registered after load so fetching the worker never competes with the
+  // first paint or the bootstrap request.
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // Not fatal: without it the app simply has no offline shell.
+    });
   });
 }
 

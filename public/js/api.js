@@ -47,8 +47,17 @@ export const me = () => get('/me');
 /* ---------- data ---------- */
 
 export const bootstrap = () => get('/bootstrap');
+export const presence = () => get('/presence');
 export const searchUsers = (q) => get(`/users?q=${encodeURIComponent(q || '')}`);
 export const getProfile = (userId) => get(`/users/${encodeURIComponent(userId)}`);
+export const requestReset = (email) => post('/auth/reset/request', { email });
+export const confirmReset = (email, code, password) => post('/auth/reset/confirm', { email, code, password });
+export const renameGroup = (convoId, title) => patch(`/conversations/${encodeURIComponent(convoId)}`, { title });
+export const addMember = (convoId, userId) => post(`/conversations/${encodeURIComponent(convoId)}/members`, { userId });
+export const removeMember = (convoId, userId) =>
+  del(`/conversations/${encodeURIComponent(convoId)}/members/${encodeURIComponent(userId)}`);
+export const searchMessages = (q, limit = 40) =>
+  get(`/search/messages?q=${encodeURIComponent(q)}&limit=${limit}`);
 export const createConversation = (payload) => post('/conversations', payload);
 export const sendMessage = (convoId, payload) => post(`/conversations/${encodeURIComponent(convoId)}/messages`, payload);
 export const editMessage = (msgId, text) => patch(`/messages/${encodeURIComponent(msgId)}`, { text });

@@ -87,6 +87,15 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(msg_id);
 
+    -- Password resets are a separate ceremony from sign-in codes, so a code
+    -- issued for one can never be redeemed for the other.
+    CREATE TABLE IF NOT EXISTS reset_codes (
+      email       TEXT PRIMARY KEY,
+      code_hash   TEXT NOT NULL,
+      expires_at  INTEGER NOT NULL,
+      attempts    INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS login_codes (
       email       TEXT PRIMARY KEY,
       code_hash   TEXT NOT NULL,
@@ -123,6 +132,7 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_messages_convo ON messages(convo_id, at);
     CREATE INDEX IF NOT EXISTS idx_messages_seq ON messages(seq);
+    CREATE INDEX IF NOT EXISTS idx_messages_from ON messages(from_id);
 
     CREATE TABLE IF NOT EXISTS reactions (
       msg_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -172,6 +182,7 @@ function migrate() {
 
   // CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
   // columns added after the first release need their own step.
+  addColumns('messages', { system: 'INTEGER NOT NULL DEFAULT 0' });
   addColumns('users', {
     pronouns: 'TEXT',
     title: 'TEXT',
@@ -258,6 +269,7 @@ export function shapeMessage(row, reactions = {}) {
     editedAt: row.edited_at || undefined,
     deletedAt: row.deleted_at || undefined,
     deliveredAt: row.delivered_at || undefined,
+    system: !!row.system,
     reactions,
   };
 }

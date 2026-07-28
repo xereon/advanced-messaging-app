@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Relay">
+  <rect width="512" height="512" fill="#2458E6"/>
+  <path d="M168 320V216a44 44 0 0 1 44-44h88a44 44 0 0 1 44 44v56a44 44 0 0 1-44 44h-84l-48 38v-34z"
+        fill="none" stroke="#fff" stroke-width="28" stroke-linejoin="round"/>
+</svg>

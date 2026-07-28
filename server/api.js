@@ -225,6 +225,137 @@ export function createConversation(me, { type, title, members }) {
   return announce(convoWithMembers(db.prepare('SELECT * FROM conversations WHERE id = ?').get(id)));
 }
 
+/* ---------- group management ---------- */
+
+function assertGroup(convoId) {
+  const convo = handle().prepare('SELECT * FROM conversations WHERE id = ?').get(convoId);
+  if (!convo) throw new HttpError(404, 'No such conversation.');
+  if (convo.type !== 'group') bad('That only applies to group conversations.');
+  return convo;
+}
+
+/** Tell the members their group changed, and post a note in the transcript. */
+function announceGroupChange(convoId, actorId, text) {
+  const convo = convoWithMembers(handle().prepare('SELECT * FROM conversations WHERE id = ?').get(convoId));
+  rt.publish(convo.members, 'conversation', {
+    conversation: convo,
+    users: convo.members.map((u) => publicUser(auth.findById(u))).filter(Boolean),
+  });
+  if (text) systemMessage(convoId, actorId, text);
+  return convo;
+}
+
+/**
+ * A note in the transcript about the group itself. It is stored against the
+ * person who caused it — messages.from_id is a foreign key — but flagged so the
+ * client renders it as an event rather than as something they said.
+ */
+function systemMessage(convoId, actorId, text) {
+  const id = auth.uid('m');
+  const now = Date.now();
+  const row = tx(() => {
+    handle().prepare(
+      `INSERT INTO messages (id, convo_id, from_id, text, at, seq, delivered_at, system)
+       VALUES (?,?,?,?,?,?,?,1)`,
+    ).run(id, convoId, actorId, text, now, nextSeq(), now);
+    return handle().prepare('SELECT * FROM messages WHERE id = ?').get(id);
+  });
+  const msg = { ...shapeMessage(row), attachments: [] };
+  rt.publish(rt.convoAudience(convoId), 'message', { message: msg });
+  return msg;
+}
+
+export function renameGroup(me, convoId, title) {
+  assertMember(convoId, me.id);
+  assertGroup(convoId);
+  const clean = String(title || '').trim().slice(0, 50);
+  if (!clean) bad('Give the group a name.');
+  handle().prepare('UPDATE conversations SET title = ? WHERE id = ?').run(clean, convoId);
+  return announceGroupChange(convoId, me.id, `${me.name} renamed the group to “${clean}”.`);
+}
+
+export function addMember(me, convoId, userId) {
+  assertMember(convoId, me.id);
+  assertGroup(convoId);
+  const invitee = auth.findById(userId);
+  if (!invitee) throw new HttpError(404, 'No such person.');
+  if (invitee.retired) bad('That account is no longer active.');
+
+  const already = handle().prepare('SELECT 1 AS ok FROM members WHERE convo_id = ? AND user_id = ?')
+    .get(convoId, userId);
+  if (already) bad(`${invitee.name} is already in this group.`);
+
+  handle().prepare('INSERT INTO members (convo_id, user_id) VALUES (?,?)').run(convoId, userId);
+  return announceGroupChange(convoId, me.id, `${me.name} added ${invitee.name}.`);
+}
+
+export function removeMember(me, convoId, userId) {
+  assertMember(convoId, me.id);
+  const convo = assertGroup(convoId);
+  const target = auth.findById(userId);
+  if (!target) throw new HttpError(404, 'No such person.');
+
+  const leaving = userId === me.id;
+  // Anyone can leave; only the person who created the group can remove others.
+  if (!leaving && convo.created_by !== me.id) {
+    throw new HttpError(403, 'Only the person who created the group can remove others.');
+  }
+
+  const audience = rt.convoAudience(convoId);
+  handle().prepare('DELETE FROM members WHERE convo_id = ? AND user_id = ?').run(convoId, userId);
+
+  const remaining = handle().prepare('SELECT COUNT(*) AS c FROM members WHERE convo_id = ?').get(convoId).c;
+  if (remaining === 0) {
+    // Nobody left to see it.
+    handle().prepare('DELETE FROM conversations WHERE id = ?').run(convoId);
+    rt.publish(audience, 'conversation-removed', { convoId });
+    return { removed: true };
+  }
+
+  // Attribute the note to whoever remains able to see it.
+  const narrator = leaving ? (rt.convoAudience(convoId)[0] || null) : me.id;
+  if (narrator) {
+    systemMessage(convoId, narrator, leaving ? `${me.name} left the group.` : `${me.name} removed ${target.name}.`);
+  }
+  announceGroupChange(convoId, null, null);
+  // The person who left needs to hear it too; they are no longer in the audience.
+  if (leaving) rt.publish([me.id], 'conversation-removed', { convoId });
+  return { removed: false };
+}
+
+/* ---------- message search ---------- */
+
+/**
+ * Search the full history of every conversation the caller belongs to — not
+ * only what their client happens to have loaded.
+ */
+export function searchMessages(me, q, limit = 40) {
+  const needle = String(q || '').trim();
+  if (needle.length < 2) return { results: [] };
+  const capped = Math.min(Math.max(Number(limit) || 40, 1), 100);
+  const like = `%${needle.toLowerCase()}%`;
+
+  const rows = handle().prepare(`
+    SELECT m.*, c.type AS convo_type, c.title AS convo_title
+      FROM messages m
+      JOIN members mem ON mem.convo_id = m.convo_id AND mem.user_id = ?
+      JOIN conversations c ON c.id = m.convo_id
+      LEFT JOIN convo_meta meta ON meta.convo_id = m.convo_id AND meta.user_id = ?
+     WHERE m.deleted_at IS NULL
+       AND LOWER(m.text) LIKE ?
+       AND m.at > IFNULL(meta.cleared_before, 0)
+     ORDER BY m.at DESC
+     LIMIT ?`).all(me.id, me.id, like, capped);
+
+  return {
+    results: rows.map((r) => ({
+      ...shapeMessage(r),
+      convoType: r.convo_type,
+      convoTitle: r.convo_title,
+    })),
+  };
+}
+
 /* ---------- messages ---------- */
 
 export function sendMessage(me, convoId, { text, replyTo, clientId, attachmentIds = [] }) {

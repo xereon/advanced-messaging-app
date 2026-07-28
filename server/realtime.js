@@ -2,7 +2,14 @@
 //
 // One SSE stream per open tab, keyed by user. EventSource reconnects on its
 // own and replays what it missed via Last-Event-ID, so a dropped connection
-// costs nothing. Presence is derived from who currently holds a stream.
+// costs nothing.
+//
+// Presence is deliberately NOT just "who holds a stream in this process".
+// Under Passenger (cPanel) or any multi-worker setup, each process has its own
+// memory: one worker holds Alice's stream while another answers Bob's request
+// and has never heard of her, so she looks offline. Presence therefore lives in
+// the database — a heartbeat on users.last_seen — which every worker can read.
+// The in-process set is kept as a fast path for the worker that owns the stream.
 
 import { handle } from './db.js';
 
@@ -12,6 +19,8 @@ const streams = new Map();
 const backlog = [];
 const BACKLOG_LIMIT = 500;
 const HEARTBEAT_MS = 25_000;
+/** How long after its last heartbeat an account still counts as online. */
+export const PRESENCE_TTL_MS = 70_000;
 
 let lastEventId = 0;
 
@@ -35,8 +44,12 @@ export function subscribe(userId, res, sinceId) {
     }
   }
 
+  // The heartbeat does double duty: it keeps the connection from idling out,
+  // and it refreshes this account's presence for every other worker to see.
+  touchLastSeen(userId);
   const heartbeat = setInterval(() => {
     try { res.write(': ping\n\n'); } catch { /* closed */ }
+    touchLastSeen(userId);
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
 
@@ -47,7 +60,9 @@ export function subscribe(userId, res, sinceId) {
     set.delete(res);
     if (set.size === 0) {
       streams.delete(userId);
-      touchLastSeen(userId);
+      // Backdate the heartbeat so other workers stop counting them as online
+      // rather than waiting out the full TTL.
+      expireLastSeen(userId);
       publishPresence(userId, false);
     }
   };
@@ -60,6 +75,13 @@ export function subscribe(userId, res, sinceId) {
 function touchLastSeen(userId) {
   try {
     handle().prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(Date.now(), userId);
+  } catch { /* db may be closing */ }
+}
+
+function expireLastSeen(userId) {
+  try {
+    handle().prepare('UPDATE users SET last_seen = ? WHERE id = ?')
+      .run(Date.now() - PRESENCE_TTL_MS - 1000, userId);
   } catch { /* db may be closing */ }
 }
 
@@ -101,8 +123,34 @@ function publishPresence(userId, online) {
   publish(contactAudience(userId), 'presence', { userId, online, at: Date.now() });
 }
 
-export function onlineUserIds() { return [...streams.keys()]; }
-export function isOnline(userId) { return streams.has(userId); }
+/**
+ * Everyone currently online, according to the database rather than this
+ * worker's memory. Bots are always available.
+ */
+export function onlineUserIds() {
+  const cutoff = Date.now() - PRESENCE_TTL_MS;
+  try {
+    const rows = handle().prepare(
+      'SELECT id FROM users WHERE is_bot = 1 OR last_seen > ?',
+    ).all(cutoff);
+    // Union with this worker's own streams: a client that has just connected
+    // may not have written its first heartbeat yet.
+    return [...new Set([...rows.map((r) => r.id), ...streams.keys()])];
+  } catch {
+    return [...streams.keys()];
+  }
+}
+
+export function isOnline(userId) {
+  if (streams.has(userId)) return true;
+  try {
+    const row = handle().prepare('SELECT is_bot, last_seen FROM users WHERE id = ?').get(userId);
+    if (!row) return false;
+    return !!row.is_bot || row.last_seen > Date.now() - PRESENCE_TTL_MS;
+  } catch {
+    return false;
+  }
+}
 
 export function closeAll() {
   for (const set of streams.values()) {

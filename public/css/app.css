@@ -1687,3 +1687,36 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   .profile-facts dt { margin-top: 0.5rem; }
   .status-row { max-width: none; }
 }
+
+/* ---------- Group events in the transcript ---------- */
+.msg.system {
+  align-self: center;
+  max-width: min(32rem, 92%);
+  margin: 0.6rem 0;
+}
+.system-note {
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--text-3);
+  background: var(--sunken);
+  border-radius: 999px;
+  padding: 0.25rem 0.85rem;
+}
+
+/* ---------- Group members ---------- */
+.member-list { list-style: none; padding: 0; margin: 0 0 1rem; }
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.member-row:last-child { border-bottom: 0; }
+.member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.forgot-row { text-align: right; margin: -0.4rem 0 0.6rem; font-size: 0.875rem; }
+
+/* A message still waiting for a connection. */
+.msg.pending .bubble { opacity: 0.72; }
+.msg.queued .bubble { outline: 1px dashed var(--border-strong); }

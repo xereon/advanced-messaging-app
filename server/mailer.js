@@ -192,6 +192,29 @@ export async function send({ to, subject, text, html }) {
 
 /* ---------- the one message Relay sends ---------- */
 
+export function resetCodeEmail(name, code) {
+  const safeName = String(name || 'there').replace(/[<>&]/g, '');
+  return {
+    subject: `${code} is your Relay password reset code`,
+    text: [
+      `Hello ${safeName},`, '',
+      `Your Relay password reset code is ${code}`, '',
+      'It expires in 10 minutes and can only be used once.',
+      'If you did not ask to reset your password, ignore this message —',
+      'your password has not changed.',
+    ].join('\n'),
+    html: [
+      '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:32rem">',
+      `<p>Hello ${safeName},</p>`,
+      '<p>Your Relay password reset code is:</p>',
+      `<p style="font-size:1.75rem;font-weight:700;letter-spacing:0.2em;margin:1.25rem 0">${code}</p>`,
+      '<p>It expires in 10 minutes and can only be used once.</p>',
+      '<p style="color:#4c5a72;font-size:0.875rem">If you did not ask for this, ignore the message — your password has not changed.</p>',
+      '</div>',
+    ].join(''),
+  };
+}
+
 export function loginCodeEmail(name, code) {
   const safeName = String(name || 'there').replace(/[<>&]/g, '');
   return {

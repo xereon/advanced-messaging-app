@@ -210,6 +210,60 @@ export async function redeemLoginCode(email, code) {
   return findByEmail(clean);
 }
 
+/* ---------- password reset ---------- */
+
+/**
+ * Issue a reset code. Deliberately silent about whether the address exists —
+ * the caller reports the same thing either way, so this endpoint cannot be
+ * used to discover who has an account.
+ */
+export async function issueResetCode(email) {
+  const clean = normalizeEmail(email);
+  const user = findByEmail(clean);
+  if (!user || !user.pw_hash) return { code: null, user: null };
+
+  const code = String(randomBytes(4).readUInt32BE(0) % 1000000).padStart(6, '0');
+  const { salt, hash } = await makeSecret(code);
+  handle().prepare(
+    `INSERT INTO reset_codes (email, code_hash, expires_at, attempts) VALUES (?,?,?,0)
+     ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash,
+       expires_at = excluded.expires_at, attempts = 0`,
+  ).run(clean, `${salt}:${hash}`, Date.now() + CODE_TTL_MS);
+  return { code, user };
+}
+
+export async function redeemResetCode(email, code, newPassword) {
+  const db = handle();
+  const clean = normalizeEmail(email);
+  const row = db.prepare('SELECT * FROM reset_codes WHERE email = ?').get(clean);
+  const fail = (msg, status = 400) => { const e = new Error(msg); e.status = status; throw e; };
+
+  if (!row) fail('Request a reset code first.');
+  if (row.expires_at < Date.now()) {
+    db.prepare('DELETE FROM reset_codes WHERE email = ?').run(clean);
+    fail('That code expired. Request a new one.');
+  }
+  if (row.attempts >= MAX_CODE_ATTEMPTS) {
+    db.prepare('DELETE FROM reset_codes WHERE email = ?').run(clean);
+    fail('Too many incorrect attempts. Request a new code.', 429);
+  }
+  if (String(newPassword || '').length < 8) fail('Password must be at least 8 characters.');
+
+  const [salt, expected] = row.code_hash.split(':');
+  if (!(await verifySecret(String(code).trim(), salt, expected))) {
+    db.prepare('UPDATE reset_codes SET attempts = attempts + 1 WHERE email = ?').run(clean);
+    fail('That code is not right.');
+  }
+
+  const user = findByEmail(clean);
+  const next = await makeSecret(newPassword);
+  db.prepare('UPDATE users SET pw_hash = ?, pw_salt = ? WHERE id = ?').run(next.hash, next.salt, user.id);
+  db.prepare('DELETE FROM reset_codes WHERE email = ?').run(clean);
+  // Whoever was signed in with the old password no longer is.
+  destroyAllSessions(user.id);
+  return findById(user.id);
+}
+
 /* ---------- WebAuthn credential storage ---------- */
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;

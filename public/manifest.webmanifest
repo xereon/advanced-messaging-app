@@ -1,0 +1,33 @@
+{
+  "name": "Relay — Accessible Messaging",
+  "short_name": "Relay",
+  "description": "Real-time messaging built to stay legible: ten WCAG-AA themes, colour-vision palettes and full keyboard operability.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1320",
+  "theme_color": "#2458e6",
+  "categories": ["social", "productivity"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New conversation",
+      "short_name": "New chat",
+      "url": "/?action=new-chat"
+    }
+  ]
+}

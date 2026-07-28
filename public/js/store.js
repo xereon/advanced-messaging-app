@@ -7,6 +7,7 @@
 // or somebody else entirely.
 
 import * as api from './api.js';
+import * as outbox from './outbox.js';
 import { uid } from './util.js';
 
 /* ---------- event bus ---------- */
@@ -45,6 +46,17 @@ export function hydrate(boot) {
   for (const id of boot.contacts) contacts.add(id);
   for (const id of boot.online) online.add(id);
   serverSettings = boot.settings;
+
+  // Anything the outbox is still holding belongs in the timeline, marked as
+  // waiting, so a reload does not appear to have swallowed it.
+  for (const entry of outbox.pending(me.id)) {
+    const list = messages.get(entry.convoId);
+    if (!list || list.some((m) => m.id === entry.clientId)) continue;
+    list.push({
+      id: entry.clientId, convoId: entry.convoId, from: me.id, text: entry.text,
+      at: entry.queuedAt, replyTo: entry.replyTo, reactions: {}, pending: true, queued: true,
+    });
+  }
 }
 
 /* ---------- users ---------- */
@@ -174,14 +186,60 @@ export async function appendMessage(convoId, draft) {
     return message;
   } catch (err) {
     const idx = list.findIndex((m) => m.id === clientId);
+    // A refusal is final; anything else is worth retrying when we reconnect.
+    const permanent = err?.status >= 400 && err.status < 500;
+    if (!permanent) {
+      outbox.add({
+        userId: me.id, clientId, convoId,
+        text: draft.text, replyTo: draft.replyTo,
+        attachmentIds: (draft.attachments || []).map((a) => a.id),
+      });
+    }
     if (idx !== -1) {
-      list[idx] = { ...list[idx], pending: false, failed: true };
+      list[idx] = { ...list[idx], pending: !permanent, failed: permanent, queued: !permanent };
       emit('message-updated', { convoId, msg: list[idx] });
     }
-    emit('error', { message: err.message });
-    throw err;
+    emit(permanent ? 'error' : 'queued', {
+      message: permanent ? err.message : 'No connection — this will send when you are back online.',
+      count: outbox.count(me.id),
+    });
+    if (permanent) throw err;
+    return null;
   }
 }
+
+/** Send everything the outbox is holding. Safe to call repeatedly. */
+export async function flushOutbox() {
+  if (!me) return 0;
+  return outbox.flush(
+    me.id,
+    async (entry) => {
+      const { message } = await api.sendMessage(entry.convoId, {
+        text: entry.text, replyTo: entry.replyTo,
+        clientId: entry.clientId, attachmentIds: entry.attachmentIds,
+      });
+      const { replacedId } = upsertMessage(message, entry.clientId);
+      emit('message-updated', { convoId: entry.convoId, msg: message, previousId: replacedId });
+      return message;
+    },
+    {
+      onGivenUp: (entry, err) => {
+        const list = messages.get(entry.convoId) || [];
+        const i = list.findIndex((m) => m.id === entry.clientId);
+        if (i !== -1) {
+          list[i] = { ...list[i], pending: false, queued: false, failed: true };
+          emit('message-updated', { convoId: entry.convoId, msg: list[i] });
+        }
+        emit('error', { message: err?.message || 'A message could not be sent.' });
+      },
+    },
+  ).then((sent) => {
+    if (sent) emit('outbox', { sent, remaining: outbox.count(me.id) });
+    return sent;
+  });
+}
+
+export const outboxCount = () => (me ? outbox.count(me.id) : 0);
 
 export async function patchMessage(convoId, msgId, patch) {
   try {
@@ -288,6 +346,41 @@ export const setPin = (pin) => api.setPin(pin);
 export const changePassword = (current, next) => api.changePassword(current, next);
 export const exportData = () => api.exportData();
 export const searchDirectory = (q) => api.searchUsers(q);
+export const searchMessages = (q) => api.searchMessages(q);
+export const requestReset = (email) => api.requestReset(email);
+export const confirmReset = (email, code, password) => api.confirmReset(email, code, password);
+
+export async function renameGroup(convoId, title) {
+  const { conversation } = await api.renameGroup(convoId, title);
+  cacheConvo(conversation);
+  emit('conversations', {});
+  return conversation;
+}
+
+export async function addMember(convoId, userId) {
+  const { conversation } = await api.addMember(convoId, userId);
+  cacheConvo(conversation);
+  emit('conversations', {});
+  return conversation;
+}
+
+export async function removeMember(convoId, userId) {
+  const res = await api.removeMember(convoId, userId);
+  emit('conversations', {});
+  return res;
+}
+
+/** Total unread across every conversation — drives the tab title badge. */
+export function totalUnread() {
+  if (!me) return 0;
+  let n = 0;
+  for (const convo of convos.values()) {
+    const meta = metas.get(convo.id);
+    if (meta?.muted) continue;
+    n += unreadCount(convo.id, me.id, meta?.clearedBefore || 0);
+  }
+  return n;
+}
 
 export async function fetchProfile(userId) {
   const profile = await api.getProfile(userId);
@@ -342,17 +435,72 @@ export function connect() {
       emit('conversations', {});
     },
     user: ({ user }) => { cacheUser(user); emit('users', { user }); },
+    'conversation-removed': ({ convoId }) => {
+      convos.delete(convoId);
+      messages.delete(convoId);
+      reads.delete(convoId);
+      metas.delete(convoId);
+      emit('conversation-removed', { convoId });
+    },
     contacts: ({ contacts: list }) => {
       contacts.clear();
       for (const id of list) contacts.add(id);
       emit('contacts', { userId: me.id });
     },
   }, {
-    onStatus: (status) => emit('connection', { status }),
+    onStatus: (status) => {
+      emit('connection', { status });
+      if (status === 'online') flushOutbox().catch(() => {});
+    },
   });
 }
 
 export function disconnect() { stream?.close(); stream = null; }
+
+/** The browser's own online signal is a second, earlier hint than the stream. */
+export function watchConnectivity() {
+  window.addEventListener('online', () => flushOutbox().catch(() => {}));
+}
+
+/**
+ * Reconcile presence with the server.
+ *
+ * A pushed presence event only reaches clients held by the same worker process,
+ * and a multi-worker host (Passenger, or several instances) has many. Polling
+ * is what makes presence correct regardless — and it keeps working even if the
+ * host buffers the event stream entirely.
+ */
+let presenceTimer = null;
+const PRESENCE_POLL_MS = 30_000;
+
+export async function refreshPresence() {
+  try {
+    const { online: ids } = await api.presence();
+    const next = new Set(ids);
+    // Only announce the accounts whose state actually moved.
+    const changed = [];
+    for (const id of next) if (!online.has(id)) changed.push(id);
+    for (const id of online) if (!next.has(id)) changed.push(id);
+    online.clear();
+    for (const id of next) online.add(id);
+    if (changed.length) emit('presence-changed', { userIds: changed });
+    return changed.length;
+  } catch {
+    return 0;   // offline; keep the last known state
+  }
+}
+
+export function watchPresence() {
+  clearInterval(presenceTimer);
+  presenceTimer = setInterval(() => refreshPresence(), PRESENCE_POLL_MS);
+  // Coming back to the tab is exactly when a stale indicator is most obvious.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshPresence();
+  });
+  refreshPresence();
+}
+
+export function stopWatchingPresence() { clearInterval(presenceTimer); presenceTimer = null; }
 
 /** Pull a fresh snapshot. The SSE backlog is bounded, so a long outage can
     outrun it and a full resync is the safe way back. */

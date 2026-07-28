@@ -155,6 +155,133 @@ const STATUS_META = {
   read: { icon: 'i-check-double', label: 'Read' },
 };
 
+/* ================= unread badge ================= */
+
+const BASE_TITLE = 'Relay';
+
+/** Put the unread count where you can see it without the app in front. */
+function refreshUnreadBadge() {
+  const n = db.totalUnread();
+  document.title = n ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
+  if (navigator.setAppBadge) {
+    if (n) navigator.setAppBadge(n).catch(() => {});
+    else navigator.clearAppBadge?.().catch(() => {});
+  }
+}
+
+/* ================= group management ================= */
+
+let groupDialogConvoId = null;
+
+async function openGroupDialog(convoId) {
+  const convo = db.getConvo(convoId);
+  if (!convo || convo.type !== 'group') return;
+  groupDialogConvoId = convoId;
+  hideErr('#group-error');
+  $('#group-rename').value = convo.title || '';
+  $('#group-add-search').value = '';
+  $('#group-add-results').innerHTML = '';
+  renderGroupMembers();
+  $('#group-dialog').showModal();
+}
+
+function renderGroupMembers() {
+  const convo = db.getConvo(groupDialogConvoId);
+  const list = $('#group-members');
+  list.innerHTML = '';
+  if (!convo) return;
+  const iCreated = convo.createdBy === me.id;
+
+  for (const id of convo.members) {
+    const person = db.getUser(id);
+    if (!person) continue;
+    const li = document.createElement('li');
+    li.className = 'member-row';
+    const av = avatarEl(person);
+    const name = document.createElement('span');
+    name.className = 'member-name';
+    name.textContent = person.id === me.id ? `${person.name} (you)` : person.name;
+    li.append(av, name);
+
+    // You can always remove yourself; only the creator can remove anyone else.
+    if (person.id !== me.id && iCreated) {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn sm';
+      remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', `Remove ${person.name} from the group`);
+      remove.addEventListener('click', async () => {
+        try {
+          await db.removeMember(groupDialogConvoId, person.id);
+          renderGroupMembers();
+          renderSidebar();
+          toast(`${person.name} removed`, 'success');
+        } catch (err) { showErr('#group-error', err.message); }
+      });
+      li.append(remove);
+    }
+    list.append(li);
+  }
+}
+
+function wireGroupDialog() {
+  $('#btn-rename-group').addEventListener('click', async () => {
+    try {
+      await db.renameGroup(groupDialogConvoId, $('#group-rename').value);
+      renderSidebar();
+      if (activeConvoId === groupDialogConvoId) renderConvoHeader();
+      toast('Group renamed', 'success');
+    } catch (err) { showErr('#group-error', err.message); }
+  });
+
+  $('#group-add-search').addEventListener('input', debounce(async (e) => {
+    const q = e.target.value.trim();
+    const box = $('#group-add-results');
+    box.innerHTML = '';
+    if (!q) return;
+    const convo = db.getConvo(groupDialogConvoId);
+    const people = (await fetchPeople(q) || searchPeople(q))
+      .filter((u) => !convo.members.includes(u.id) && !u.retired)
+      .slice(0, 6);
+    if (!people.length) { box.innerHTML = '<p class="convo-empty">Nobody new matches.</p>'; return; }
+    for (const person of people) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'directory-item';
+      row.append(avatarEl(person));
+      const body = document.createElement('div');
+      body.innerHTML = '<div class="dir-name"></div><div class="dir-role"></div>';
+      body.querySelector('.dir-name').textContent = person.name;
+      body.querySelector('.dir-role').textContent = personSubtitle(person);
+      row.append(body);
+      row.addEventListener('click', async () => {
+        try {
+          await db.addMember(groupDialogConvoId, person.id);
+          $('#group-add-search').value = '';
+          box.innerHTML = '';
+          renderGroupMembers();
+          renderSidebar();
+          toast(`${person.name} added`, 'success');
+        } catch (err) { showErr('#group-error', err.message); }
+      });
+      box.append(row);
+    }
+  }, 250));
+
+  $('#btn-leave-group').addEventListener('click', async () => {
+    const convo = db.getConvo(groupDialogConvoId);
+    if (!await confirmDialog('Leave this group?',
+      `You will stop receiving messages in “${convo?.title || 'this group'}”.`, 'Leave')) return;
+    try {
+      await db.removeMember(groupDialogConvoId, me.id);
+      $('#group-dialog').close();
+      if (activeConvoId === groupDialogConvoId) closeConvoToList();
+      renderSidebar();
+      toast('You left the group', 'success');
+    } catch (err) { showErr('#group-error', err.message); }
+  });
+}
+
 /* ================= profiles ================= */
 
 /** Someone's local time, when they have published a zone. */
@@ -547,6 +674,7 @@ function renderContactsList() {
 /* ---------- global search ---------- */
 
 let remotePeople = { q: null, users: [] };
+let remoteMessages = { q: null, results: [] };
 
 function renderGlobalSearch(q) {
   const results = $('#search-results');
@@ -562,15 +690,31 @@ function renderGlobalSearch(q) {
   const needle = q.toLowerCase();
 
   const convoHits = myConvos().filter((c) => convoView(c).title.toLowerCase().includes(needle));
-  const msgHits = [];
+  // Locally-known matches paint instantly; the server's full-history results
+  // replace them a moment later. Searching only what is loaded would miss
+  // anything older than the last 200 messages in a conversation.
+  const localHits = [];
   for (const convo of myConvos()) {
     for (const m of visibleMessages(convo)) {
-      if (!m.deletedAt && m.text.toLowerCase().includes(needle)) {
-        msgHits.push({ convo, m });
-        if (msgHits.length >= 30) break;
+      if (!m.deletedAt && !m.system && m.text.toLowerCase().includes(needle)) {
+        localHits.push({ convo, m });
+        if (localHits.length >= 30) break;
       }
     }
-    if (msgHits.length >= 30) break;
+    if (localHits.length >= 30) break;
+  }
+
+  const remoteMsgs = remoteMessages.q === q ? remoteMessages.results : null;
+  const msgHits = remoteMsgs
+    ? remoteMsgs.map((m) => ({ convo: db.getConvo(m.convoId), m })).filter((h) => h.convo)
+    : localHits;
+
+  if (q.length >= 2 && remoteMessages.q !== q) {
+    db.searchMessages(q).then(({ results }) => {
+      if ($('#global-search').value.trim() !== q) return;
+      remoteMessages = { q, results };
+      renderGlobalSearch(q);
+    }).catch(() => { /* keep the local results */ });
   }
 
   const addHeading = (t) => {
@@ -834,6 +978,7 @@ function renderConvoHeader() {
   pinBtn.title = meta.pinned ? 'Unpin conversation' : 'Pin conversation';
   pinBtn.setAttribute('aria-label', pinBtn.title);
   $('#mute-label').textContent = meta.muted ? 'Unmute notifications' : 'Mute notifications';
+  $('#convo-menu [data-action="group-details"]').hidden = convo.type !== 'group';
 
   // Contacts apply to a person, so the menu item only makes sense in a DM.
   const contactItem = $('#convo-menu [data-action="contact"]');
@@ -935,6 +1080,18 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
   // a single tab stop and arrow keys move between messages.
   el.tabIndex = -1;
   el.setAttribute('role', 'listitem');
+
+  if (m.system) {
+    el.className = 'msg system';
+    el.dataset.msgId = m.id;
+    el.tabIndex = -1;
+    el.setAttribute('role', 'listitem');
+    const note = document.createElement('p');
+    note.className = 'system-note';
+    note.textContent = m.text;
+    el.append(note);
+    return el;
+  }
 
   if (!mine) {
     if (groupEnd) el.append(avatarEl(author, 'avatar'));
@@ -2164,6 +2321,7 @@ function handleIncoming(convoId, msg) {
     updateJumpButton(msg.from !== me.id);
   }
   renderSidebar();
+  refreshUnreadBadge();
 }
 
 function wireStoreEvents() {
@@ -2177,6 +2335,22 @@ function wireStoreEvents() {
   db.on('reads', ({ convoId }) => {
     // Receipts change only the status icons on your own messages.
     if (convoId === activeConvoId) refreshOwnStatuses();
+    renderSidebar();
+    refreshUnreadBadge();
+  });
+  db.on('conversation-removed', ({ convoId }) => {
+    if (convoId === activeConvoId) closeConvoToList();
+    if ($('#group-dialog').open && groupDialogConvoId === convoId) $('#group-dialog').close();
+    renderSidebar();
+    refreshUnreadBadge();
+  });
+  db.on('queued', ({ message, count }) => {
+    toast(count > 1 ? `${message} (${count} waiting)` : message, 'info');
+    setConnectionBanner('offline');
+  });
+  db.on('outbox', ({ sent }) => {
+    toast(sent === 1 ? 'Queued message sent.' : `${sent} queued messages sent.`, 'success');
+    if (activeConvoId) renderMessages();
     renderSidebar();
   });
   db.on('history', ({ convoId }) => { if (convoId === activeConvoId) renderSidebar(); });
@@ -2208,14 +2382,20 @@ function wireStoreEvents() {
       db.markRead(activeConvoId, me.id);
       renderSidebar();
     }
+    refreshUnreadBadge();
   });
 }
 
 function setConnectionBanner(status) {
   const el = $('#connection-banner');
   if (!el) return;
-  el.hidden = status === 'online';
-  el.textContent = status === 'reconnecting' ? 'Reconnecting…' : '';
+  const queued = db.outboxCount();
+  // Being offline matters more when it is holding something you wrote.
+  if (status === 'online' && !queued) { el.hidden = true; el.textContent = ''; return; }
+  el.hidden = false;
+  el.textContent = queued
+    ? `Offline — ${queued} message${queued === 1 ? '' : 's'} waiting to send`
+    : 'Reconnecting…';
 }
 
 /* ================= keyboard shortcuts ================= */
@@ -2348,6 +2528,7 @@ function wireConvoPane() {
         toast(had ? `${other.name} removed from contacts` : `${other.name} added to contacts`, 'success');
       }
     }
+    if (action === 'group-details') openGroupDialog(activeConvoId);
     if (action === 'mute') {
       db.setConvoMeta(me.id, activeConvoId, { muted: !meta.muted });
       renderConvoHeader();
@@ -2469,6 +2650,11 @@ export function initUI(user, { onSignOut } = {}) {
   wireMessageKeys();
   wireTouchMessageActions();
   wireVisualViewport();
+  wireGroupDialog();
   db.connect();
+  db.watchConnectivity();
+  db.watchPresence();
+  db.flushOutbox().catch(() => {});
+  refreshUnreadBadge();
   announce(`Signed in as ${me.name}. ${myConvos().length} conversations.`);
 }

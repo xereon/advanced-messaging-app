@@ -313,6 +313,33 @@ async function handleApi(req, res, url) {
     return send(res, 200, { user: auth.publicUser(user) }, startSession(user, 'code'));
   }
 
+  if (path === '/auth/reset/request' && method === 'POST') {
+    if (!auth.rateLimit(`reset:${clientIp(req)}`, { limit: 10, windowMs: 15 * 60 * 1000 })) {
+      return fail(res, 429, 'Too many reset requests. Wait a few minutes.');
+    }
+    const { code, user } = await auth.issueResetCode(body.email);
+    // Always answer the same way, so this cannot reveal who has an account.
+    if (!user) return send(res, 200, { delivery: 'sent-if-registered' });
+    if (mailer.isConfigured()) {
+      try {
+        await mailer.send({ to: user.email, ...mailer.resetCodeEmail(user.name, code) });
+        return send(res, 200, { delivery: 'email', to: maskEmail(user.email) });
+      } catch (err) {
+        console.error('[relay] reset email failed:', err.message);
+        return fail(res, 502, 'Could not send the email. Try again shortly.');
+      }
+    }
+    return send(res, 200, { delivery: 'demo-inbox', code });
+  }
+
+  if (path === '/auth/reset/confirm' && method === 'POST') {
+    if (!auth.rateLimit(`resetconfirm:${clientIp(req)}`, { limit: 20, windowMs: 15 * 60 * 1000 })) {
+      return fail(res, 429, 'Too many attempts. Wait a few minutes.');
+    }
+    const user = await auth.redeemResetCode(body.email, body.code, body.password);
+    return send(res, 200, { user: auth.publicUser(user) }, startSession(user, 'password'));
+  }
+
   if (path === '/auth/pin' && method === 'POST') {
     const key = `pin:${clientIp(req)}:${body.userId}`;
     if (!auth.rateLimit(key, { limit: 8, windowMs: 15 * 60 * 1000 })) {
@@ -430,6 +457,13 @@ async function handleApi(req, res, url) {
   }
 
   if (path === '/bootstrap' && method === 'GET') return send(res, 200, api.bootstrap(need()));
+
+  // Presence has to be polled as well as pushed: a push only reaches clients
+  // served by the same worker, and under Passenger there are several.
+  if (path === '/presence' && method === 'GET') {
+    need();
+    return send(res, 200, { online: rt.onlineUserIds() }, { 'Cache-Control': 'no-store' });
+  }
   if (path === '/export' && method === 'GET') return send(res, 200, api.exportData(need()));
 
   if (path === '/users' && method === 'GET') {
@@ -490,6 +524,19 @@ async function handleApi(req, res, url) {
   }
   if ((m = path.match(/^\/messages\/([^/]+)\/reactions$/)) && method === 'POST') {
     return send(res, 200, { message: api.toggleReaction(need(), decodeURIComponent(m[1]), body.emoji) });
+  }
+
+  if ((m = path.match(/^\/conversations\/([^/]+)$/)) && method === 'PATCH') {
+    return send(res, 200, { conversation: api.renameGroup(need(), decodeURIComponent(m[1]), body.title) });
+  }
+  if ((m = path.match(/^\/conversations\/([^/]+)\/members$/)) && method === 'POST') {
+    return send(res, 200, { conversation: api.addMember(need(), decodeURIComponent(m[1]), body.userId) });
+  }
+  if ((m = path.match(/^\/conversations\/([^/]+)\/members\/([^/]+)$/)) && method === 'DELETE') {
+    return send(res, 200, api.removeMember(need(), decodeURIComponent(m[1]), decodeURIComponent(m[2])));
+  }
+  if (path === '/search/messages' && method === 'GET') {
+    return send(res, 200, api.searchMessages(need(), url.searchParams.get('q'), url.searchParams.get('limit')));
   }
 
   if (path === '/contacts' && method === 'POST') return send(res, 200, api.addContact(need(), body.contactId));
