@@ -9,7 +9,8 @@ import {
   randomBytes, scrypt as scryptCb, timingSafeEqual, createHash, randomUUID,
 } from 'node:crypto';
 import { promisify } from 'node:util';
-import { handle, tx, publicUser } from './db.js';
+import { handle, tx, publicUser, allocateUsername } from './db.js';
+import { slugifyUsername } from './username.js';
 
 const scrypt = promisify(scryptCb);
 
@@ -132,9 +133,13 @@ export async function createAccount({ name, email, password }) {
     avatar_color: pick(AVATAR_COLORS),
     created_at: Date.now(),
   };
-  db.prepare(`INSERT INTO users (id, name, email, pw_hash, pw_salt, avatar_color, created_at, last_seen)
-              VALUES (?,?,?,?,?,?,?,0)`)
-    .run(user.id, user.name, user.email, pwHash, salt, user.avatar_color, user.created_at);
+  // Everyone gets a handle immediately, derived from their name. Asking for one
+  // during sign-up is a second thing to get right before you can start, and an
+  // account without one cannot be found by the search that expects it.
+  const username = allocateUsername(slugifyUsername(user.name));
+  db.prepare(`INSERT INTO users (id, name, username, email, pw_hash, pw_salt, avatar_color, created_at, last_seen)
+              VALUES (?,?,?,?,?,?,?,?,0)`)
+    .run(user.id, user.name, username, user.email, pwHash, salt, user.avatar_color, user.created_at);
   return findById(user.id);
 }
 
@@ -159,9 +164,10 @@ export function createGuest() {
     db.prepare('SELECT avatar_color FROM users WHERE is_guest = 1 AND retired = 0').all().map((r) => r.avatar_color),
   );
   const id = uid('u');
-  db.prepare(`INSERT INTO users (id, name, email, avatar_color, role, is_guest, created_at, last_seen)
-              VALUES (?,?,NULL,?,'Guest',1,?,0)`)
-    .run(id, name, GUEST_COLORS.find((c) => !usedColors.has(c)) || pick(GUEST_COLORS), Date.now());
+  db.prepare(`INSERT INTO users (id, name, username, email, avatar_color, role, is_guest, created_at, last_seen)
+              VALUES (?,?,?,NULL,?,'Guest',1,?,0)`)
+    .run(id, name, allocateUsername(slugifyUsername(name)),
+      GUEST_COLORS.find((c) => !usedColors.has(c)) || pick(GUEST_COLORS), Date.now());
   return findById(id);
 }
 

@@ -352,6 +352,17 @@
           <input type="text" id="set-display-name" maxlength="60" autocomplete="name">
         </div>
         <div class="setting-row">
+          <label for="set-username">Username</label>
+          <div class="handle-field">
+            <span class="handle-at" aria-hidden="true">@</span>
+            <input type="text" id="set-username" maxlength="20" minlength="3" spellcheck="false"
+                   autocapitalize="none" autocorrect="off" autocomplete="username"
+                   pattern="[A-Za-z0-9_]{3,20}" aria-describedby="username-hint">
+          </div>
+          <p class="hint" id="username-hint">How people find you. 3–20 characters: letters, numbers and underscores.</p>
+          <p class="field-error" id="username-error" role="alert" hidden></p>
+        </div>
+        <div class="setting-row">
           <label for="set-pronouns">Pronouns <span class="hint">optional</span></label>
           <input type="text" id="set-pronouns" maxlength="24" placeholder="they/them" autocomplete="off">
         </div>
@@ -574,7 +585,8 @@
   <div class="dialog-body">
     <div class="field">
       <label for="new-chat-search" class="visually-hidden">Search people</label>
-      <input id="new-chat-search" type="search" placeholder="Search people…" autocomplete="off">
+      <input id="new-chat-search" type="search" placeholder="Search by name or @username…" autocomplete="off"
+             spellcheck="false" autocapitalize="none">
     </div>
     <div id="directory-list" class="directory-list" role="list" aria-label="People"></div>
     <div class="group-compose" id="group-compose" hidden>
@@ -602,6 +614,7 @@
       <span class="avatar xl" id="profile-avatar" aria-hidden="true"></span>
       <div class="profile-head-text">
         <h3 id="profile-name"></h3>
+        <p class="profile-username" id="profile-username" hidden></p>
         <p class="hint" id="profile-meta"></p>
         <p class="profile-status" id="profile-status" hidden></p>
       </div>
@@ -644,7 +657,8 @@
     <ul class="member-list" id="group-members"></ul>
     <div class="field">
       <label for="group-add-search">Add someone</label>
-      <input type="search" id="group-add-search" placeholder="Search people…" autocomplete="off">
+      <input type="search" id="group-add-search" placeholder="Search by name or @username…" autocomplete="off"
+             spellcheck="false" autocapitalize="none">
       <div id="group-add-results" class="directory-list" role="list"></div>
     </div>
     <p class="field-error" id="group-error" role="alert" hidden></p>

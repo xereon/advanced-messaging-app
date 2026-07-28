@@ -1,9 +1,10 @@
 // bots.js — the simulated colleagues, now real rows in the database that reply
 // server-side, so their messages reach every connected client.
 
-import { handle, tx, nextSeq, shapeMessage } from './db.js';
+import { handle, tx, nextSeq, shapeMessage, allocateUsername } from './db.js';
 import { uid } from './auth.js';
 import * as rt from './realtime.js';
+import { slugifyUsername } from './username.js';
 
 export const BOTS = [
   { id: 'u-bot-ava', name: 'Ava Chen', role: 'Product Manager', color: '#7C4DDB',
@@ -52,12 +53,15 @@ export function seedBots() {
   if (!demoBotsEnabled()) return;
   const db = handle();
   const ins = db.prepare(
-    `INSERT OR IGNORE INTO users (id, name, email, avatar_color, role, is_bot, created_at, last_seen)
-     VALUES (?,?,?,?,?,1,?,?)`,
+    `INSERT OR IGNORE INTO users (id, name, username, email, avatar_color, role, is_bot, created_at, last_seen)
+     VALUES (?,?,?,?,?,?,1,?,?)`,
   );
   const now = Date.now();
   for (const b of BOTS) {
-    ins.run(b.id, b.name, `${b.name.split(' ')[0].toLowerCase()}@relay.demo`, b.color, b.role, now, now);
+    // Seeding runs after the schema migration that backfills handles, so these
+    // have to bring their own or they would be the only accounts without one.
+    ins.run(b.id, b.name, allocateUsername(slugifyUsername(b.name)),
+      `${b.name.split(' ')[0].toLowerCase()}@relay.demo`, b.color, b.role, now, now);
   }
 }
 

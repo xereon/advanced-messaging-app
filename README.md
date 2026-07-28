@@ -313,15 +313,40 @@ muting, unread badges and dividers, groups, message formatting
 (`**bold**`, `*italic*`, `` `code` ``, auto-links), day separators, and JSON
 export of everything the server holds about you.
 
-Search covers conversations, **people** (by name, email or role) and full
-message history, with a separate in-conversation search that cycles matches.
-People search queries the server, so accounts that registered independently can
-find each other; matching on an email address works, but the address itself is
-only disclosed to people you already share a conversation with or have as a
+Search covers conversations, **people** and full message history, with a
+separate in-conversation search that cycles matches.
+
+**Every account has a username** — `@ada_lovelace` — assigned from the display
+name at sign-up (guests and pre-existing accounts included, so it is something
+you can rely on) and changeable under **Settings → Profile**. It is 3–20
+characters of letters, numbers and underscores, stored lowercase because case is
+not identity: allowing both `@ben` and `@Ben` would make a handle useless for
+finding somebody and an easy way to pass as them. Handles that address the
+service itself — `admin`, `support`, `security` — are reserved.
+
+**People search is a lookup, not a member list.** Nothing is sent to the server
+until you have typed three characters, and the server independently refuses to
+answer below that: a blank query returns nobody rather than the entire
+directory. Below the threshold the dialog shows the people you already know —
+your contacts and anyone you share a conversation with — all of which the
+browser already had.
+
+Matching is anchored rather than "contains anywhere":
+
+| Field | Matches |
+| --- | --- |
+| Username | prefix — `ada` finds `@ada_lovelace`; a leading `@` is optional |
+| Name | prefix of any word, so `smith` finds "John Smith" |
+| Role | prefix of any word |
+| Email | **exact address only** — knowing a domain, or half an address, finds nobody |
+
+An exact handle sorts above everyone who merely starts the same, and typed `%`
+or `_` are literal characters rather than SQL wildcards. An address is still
+only *disclosed* to people you already share a conversation with or have as a
 contact. Anyone you can find you can add to **contacts**, which get their own
 sidebar tab and sort to the top of search.
 
-**Profiles.** Every account has one: display name, pronouns, role, a short bio,
+**Profiles.** Every account has one: display name, username, pronouns, role, a short bio,
 an avatar colour, a time zone, and a status with an emoji that can expire on its
 own after 30 minutes, an hour, four hours, or at the end of the day. Open anyone
 by clicking their name or avatar in a conversation header, or their avatar

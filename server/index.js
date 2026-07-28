@@ -468,7 +468,7 @@ async function handleApi(req, res, url) {
   if (path === '/export' && method === 'GET') return send(res, 200, api.exportData(need()));
 
   if (path === '/users' && method === 'GET') {
-    return send(res, 200, { users: api.searchUsers(need(), url.searchParams.get('q')) });
+    return send(res, 200, api.searchUsers(need(), url.searchParams.get('q')));
   }
 
   if (path === '/conversations' && method === 'POST') {

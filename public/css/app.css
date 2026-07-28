@@ -1277,6 +1277,15 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   color: var(--text-3);
   padding: 0.6rem 0.6rem 0.2rem;
 }
+/* Explains why the list is short before a search has been typed. */
+.dir-note {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-2);
+  padding: 0.5rem 0.6rem 0.7rem;
+  margin: 0;
+}
+.dir-handle { color: var(--text-3); }
 
 /* ---------- Toasts ---------- */
 .toasts {
@@ -1644,6 +1653,31 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   margin: 0 0 1rem;
   font-size: 0.875rem;
 }
+.profile-username {
+  margin: 0.1rem 0 0.15rem;
+  color: var(--text-2);
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+/* The @ is part of the control, so it does not have to be typed. */
+.handle-field { display: flex; align-items: stretch; }
+.handle-field .handle-at {
+  display: flex;
+  align-items: center;
+  padding: 0 0.6rem;
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: var(--radius-s) 0 0 var(--radius-s);
+  background: var(--sunken);
+  color: var(--text-3);
+}
+.handle-field input {
+  border-radius: 0 var(--radius-s) var(--radius-s) 0;
+  min-width: 0;
+  flex: 1;
+}
+
 .profile-facts dt { color: var(--text-3); }
 .profile-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 .profile-subhead {

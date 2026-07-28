@@ -179,14 +179,21 @@ describe('contacts and directory', () => {
     assert.equal((await c.post('/api/contacts', { contactId: 'u-nobody' })).status, 404);
   });
 
-  test('directory search matches name, email and role', async () => {
+  test('directory search matches username, name, exact email and role', async () => {
     const { client: c } = await signUp(srv.base, 'Seeker', 'seeker@test.io');
-    await signUp(srv.base, 'Zenobia Quill', 'zenobia@findme.test');
+    const zen = await signUp(srv.base, 'Zenobia Quill', 'zenobia@findme.test');
 
     const byName = await c.get('/api/users?q=zenobia');
     assert.ok(byName.body.users.some((u) => u.name === 'Zenobia Quill'));
 
-    const byEmail = await c.get('/api/users?q=findme.test');
+    // A surname is a word prefix, not a whole-string one.
+    const bySurname = await c.get('/api/users?q=quill');
+    assert.ok(bySurname.body.users.some((u) => u.name === 'Zenobia Quill'));
+
+    const byUsername = await c.get(`/api/users?q=@${zen.user.username}`);
+    assert.ok(byUsername.body.users.some((u) => u.id === zen.user.id), 'the @ is optional syntax');
+
+    const byEmail = await c.get('/api/users?q=zenobia@findme.test');
     assert.ok(byEmail.body.users.some((u) => u.name === 'Zenobia Quill'));
 
     const byRole = await c.get('/api/users?q=helpdesk');

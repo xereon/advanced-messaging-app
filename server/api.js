@@ -7,6 +7,7 @@ import * as rt from './realtime.js';
 import { scheduleBotReply, demoBotsEnabled } from './bots.js';
 import * as files from './files.js';
 import * as push from './push.js';
+import { normalizeUsername, usernameProblem } from './username.js';
 
 const MAX_TEXT = 4000;
 const HISTORY_LIMIT = 200;
@@ -198,16 +199,60 @@ export function bootstrap(me) {
  * already have a relationship with. Otherwise any account could page through
  * this endpoint and harvest every registered address.
  */
+/**
+ * How much you must type before the directory answers at all.
+ *
+ * A blank query used to return the whole user list, which made every account on
+ * the server browsable by anyone who opened the New chat dialog. Search should
+ * confirm a person you are already looking for, not hand out the membership
+ * list. Three characters is enough to find someone you know of and far too few
+ * to walk the directory.
+ */
+export const DIRECTORY_MIN_QUERY = 3;
+
+/**
+ * Make a user-typed string safe to drop into a LIKE pattern.
+ *
+ * `_` matches any single character in SQL, and usernames are allowed to contain
+ * it — so searching for `ada_l` would also match `adaxl` and, worse, an
+ * underscore typed by someone probing for near-miss handles would quietly widen
+ * their search. `%` has the same problem at a larger scale.
+ */
+const likeLiteral = (s) => String(s).replace(/[\\%_]/g, '\\$&');
+
+/**
+ * Find people.
+ *
+ * Matching is deliberately anchored rather than "contains anywhere":
+ *
+ *   - **username** — prefix. Handles are the thing you are meant to search by.
+ *   - **name** — prefix of any word, so "smith" still finds "John Smith" while
+ *     "ohn" no longer sweeps up every name with those letters inside it.
+ *   - **email** — exact address only. A substring match let you probe for
+ *     addresses you had no business knowing; you now have to already have it.
+ *   - **role** — prefix of any word, same reasoning as name.
+ */
 export function searchUsers(me, q) {
   const db = handle();
-  const needle = `%${String(q || '').trim().toLowerCase()}%`;
+  const raw = String(q || '').trim();
+  // A leading @ is how people write a handle; it is not part of one.
+  const term = raw.replace(/^@+/, '').toLowerCase();
+  if (term.length < DIRECTORY_MIN_QUERY) return { users: [], minQuery: DIRECTORY_MIN_QUERY };
+
+  const literal = likeLiteral(term);
+  const prefix = `${literal}%`;
+  const wordPrefix = `% ${literal}%`;
   const hidden = blockedIdsFor(me.id);
   const rows = db.prepare(`
     SELECT * FROM users
      WHERE id != ? AND retired = 0
        AND (is_bot = 0 OR ? = 1)
-       AND (LOWER(name) LIKE ? OR LOWER(IFNULL(email,'')) LIKE ? OR LOWER(IFNULL(role,'')) LIKE ?)
-     ORDER BY name LIMIT 50`).all(me.id, demoBotsEnabled() ? 1 : 0, needle, needle, needle);
+       AND (LOWER(IFNULL(username,'')) LIKE ? ESCAPE '\\'
+         OR LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(name) LIKE ? ESCAPE '\\'
+         OR LOWER(IFNULL(role,'')) LIKE ? ESCAPE '\\' OR LOWER(IFNULL(role,'')) LIKE ? ESCAPE '\\'
+         OR LOWER(IFNULL(email,'')) = ?)
+     ORDER BY name LIMIT 50`)
+    .all(me.id, demoBotsEnabled() ? 1 : 0, prefix, prefix, wordPrefix, prefix, wordPrefix, term);
 
   const known = new Set(db.prepare(`
     SELECT m2.user_id AS id FROM members m1
@@ -215,14 +260,19 @@ export function searchUsers(me, q) {
      WHERE m1.user_id = ?
     UNION SELECT contact_id AS id FROM contacts WHERE user_id = ?`).all(me.id, me.id).map((r) => r.id));
 
-  return rows
+  const users = rows
     // Someone you blocked, or who blocked you, is simply not in the directory.
     .filter((row) => !hidden.has(row.id))
     .map((row) => {
       const user = publicUser(row);
       if (!row.is_bot && !known.has(row.id)) user.email = null;
       return user;
-    });
+    })
+    // An exact handle is an unambiguous request for one person. Put them first
+    // rather than alphabetically among everyone who merely starts the same.
+    .sort((a, b) => (b.username === term) - (a.username === term));
+
+  return { users, minQuery: DIRECTORY_MIN_QUERY };
 }
 
 /* ---------- conversations ---------- */
@@ -538,7 +588,8 @@ export function searchMessages(me, q, limit = 40) {
   const needle = String(q || '').trim();
   if (needle.length < 2) return { results: [] };
   const capped = Math.min(Math.max(Number(limit) || 40, 1), 100);
-  const like = `%${needle.toLowerCase()}%`;
+  // Searching for "a_b" must find that literal text, not "axb".
+  const like = `%${likeLiteral(needle.toLowerCase())}%`;
 
   const rows = handle().prepare(`
     SELECT m.*, c.type AS convo_type, c.title AS convo_title
@@ -549,7 +600,7 @@ export function searchMessages(me, q, limit = 40) {
      WHERE m.deleted_at IS NULL
        AND m.from_id NOT IN (SELECT blocked_id FROM blocks WHERE user_id = ?)
        AND m.from_id NOT IN (SELECT user_id FROM blocks WHERE blocked_id = ?)
-       AND LOWER(m.text) LIKE ?
+       AND LOWER(m.text) LIKE ? ESCAPE '\\'
        AND m.at > IFNULL(meta.cleared_before, 0)
      ORDER BY m.at DESC
      LIMIT ?`).all(me.id, me.id, me.id, me.id, like, capped);
@@ -730,6 +781,27 @@ function optionalText(value, limit) {
   return clean || null;
 }
 
+/**
+ * The username this profile update should end up with.
+ *
+ * Returns `undefined` when the field was not part of the patch, so an update
+ * that only touches a bio does not rewrite the handle. Unchanged is allowed
+ * through without a uniqueness complaint — otherwise saving the form twice
+ * would tell you your own handle was taken.
+ */
+function nextUsername(me, value) {
+  if (value === undefined) return undefined;
+  const wanted = normalizeUsername(value);
+  if (wanted === (me.username || '')) return undefined;
+
+  const problem = usernameProblem(wanted);
+  if (problem) bad(problem);
+  const clash = handle().prepare('SELECT 1 AS ok FROM users WHERE username = ? AND id != ?')
+    .get(wanted, me.id);
+  if (clash) throw new HttpError(409, 'That username is already taken.');
+  return wanted;
+}
+
 export function updateProfile(me, patch = {}) {
   const db = handle();
 
@@ -742,6 +814,7 @@ export function updateProfile(me, patch = {}) {
   if (!/^#[0-9a-fA-F]{6}$/.test(nextColor)) bad('Invalid colour.');
 
   const fields = {
+    username: nextUsername(me, patch.username),
     pronouns: optionalText(patch.pronouns, PROFILE_LIMITS.pronouns),
     title: optionalText(patch.title, PROFILE_LIMITS.title),
     bio: optionalText(patch.bio, PROFILE_LIMITS.bio),

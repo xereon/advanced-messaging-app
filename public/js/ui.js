@@ -243,6 +243,12 @@ function wireGroupDialog() {
     const box = $('#group-add-results');
     box.innerHTML = '';
     if (!q) return;
+    // Same floor as the New chat directory: nothing is asked of the server
+    // until the query is specific enough to be about one person.
+    if (searchTerm(q).length < DIRECTORY_MIN_QUERY) {
+      box.innerHTML = `<p class="dir-note">Type at least ${DIRECTORY_MIN_QUERY} characters — name or @username.</p>`;
+      return;
+    }
     const convo = db.getConvo(groupDialogConvoId);
     const people = (await fetchPeople(q) || searchPeople(q))
       .filter((u) => !convo.members.includes(u.id) && !u.retired)
@@ -339,6 +345,10 @@ function paintProfile(profile, { partial }) {
 
   $('#profile-name').textContent = user.name;
   $('#profile-dialog-heading').textContent = isSelf ? 'Your profile' : 'Profile';
+
+  const handle = $('#profile-username');
+  handle.hidden = !user.username;
+  handle.textContent = user.username ? `@${user.username}` : '';
 
   const meta = [user.pronouns, user.title || (user.isBot ? user.role : null)].filter(Boolean);
   if (user.isGuest) meta.push('Guest');
@@ -535,6 +545,9 @@ function personSubtitle(person) {
     : person.isGuest ? ['Guest', presence] : [role, presence];
   // A status the person set themselves is more useful than their job title.
   if (status) parts.unshift(status);
+  // The handle leads: it is what you searched by and what tells two people
+  // with the same display name apart.
+  if (person.username) parts.unshift(`@${person.username}`);
   return parts.filter(Boolean).join(' · ');
 }
 
@@ -564,11 +577,22 @@ function contactToggleBtn(person) {
   return btn;
 }
 
-/** Match on name, email and role so "priya", "priya@", "design" and
-    "helpdesk" all find the right person. */
+/**
+ * How much has to be typed before the server is asked anything.
+ *
+ * The dialog used to request the whole directory the moment it opened. Now
+ * nothing about who you are looking for leaves the browser until you have
+ * typed enough to be looking for somebody specific. The server enforces the
+ * same floor — this only saves the round trip.
+ */
+const DIRECTORY_MIN_QUERY = 3;
+
+const searchTerm = (q) => String(q ?? '').trim().replace(/^@+/, '').toLowerCase();
+
+/** Match on username, name, email and role, against people already cached. */
 function personMatches(user, needle) {
   if (!needle) return true;
-  return [user.name, user.email, user.role, user.isGuest ? 'guest' : '']
+  return [user.username, user.name, user.email, user.role, user.isGuest ? 'guest' : '']
     .filter(Boolean)
     .some((field) => String(field).toLowerCase().includes(needle));
 }
@@ -584,8 +608,24 @@ function peopleOrder(a, b) {
 
 /** Matches from what this client already knows about. */
 function searchPeople(q) {
-  const needle = String(q).trim().toLowerCase();
-  return directoryPeople().filter((u) => personMatches(u, needle)).sort(peopleOrder);
+  return directoryPeople().filter((u) => personMatches(u, searchTerm(q))).sort(peopleOrder);
+}
+
+/**
+ * Who to offer before a search has been typed.
+ *
+ * Your contacts and the people you already have conversations with. Every one
+ * of them is already in this browser's cache, so showing them discloses
+ * nothing new — unlike the old behaviour, which listed the entire server.
+ */
+function familiarPeople() {
+  // Not simply "everyone cached": a search caches the strangers it returned, so
+  // the cache stops being a list of people you know after the first one.
+  const known = new Set();
+  for (const convo of db.convosFor()) for (const id of convo.members) known.add(id);
+  return directoryPeople()
+    .filter((u) => known.has(u.id) || db.isContact(me.id, u.id) || u.isBot)
+    .sort(peopleOrder);
 }
 
 /**
@@ -2022,6 +2062,7 @@ async function renderPasskeys() {
 
 const PROFILE_FIELDS = {
   '#set-display-name': 'name',
+  '#set-username': 'username',
   '#set-pronouns': 'pronouns',
   '#set-title': 'title',
   '#set-bio': 'bio',
@@ -2032,6 +2073,7 @@ const PROFILE_FIELDS = {
 
 function fillProfileForm() {
   $('#set-display-name').value = me.name || '';
+  $('#set-username').value = me.username || '';
   $('#set-pronouns').value = me.pronouns || '';
   $('#set-title').value = me.title || '';
   $('#set-bio').value = me.bio || '';
@@ -2061,7 +2103,12 @@ function renderOwnPreview() {
   av.style.setProperty('--av-bg', me.avatarColor || '#334155');
   av.textContent = initials($('#set-display-name').value || me.name);
   $('#own-preview-name').textContent = $('#set-display-name').value || me.name;
-  const meta = [$('#set-pronouns').value.trim(), $('#set-title').value.trim()].filter(Boolean);
+  const handle = $('#set-username').value.trim().replace(/^@+/, '');
+  const meta = [
+    handle ? `@${handle}` : '',
+    $('#set-pronouns').value.trim(),
+    $('#set-title').value.trim(),
+  ].filter(Boolean);
   $('#own-preview-meta').textContent = meta.join(' · ');
   const status = `${$('#set-status-emoji').value.trim()} ${$('#set-status-text').value.trim()}`.trim();
   $('#own-preview-status').textContent = status;
@@ -2078,15 +2125,45 @@ function statusExpiryFromChoice() {
   return Date.now() + Number(choice) * 60000;
 }
 
+/**
+ * Immediate feedback on the shape of a handle.
+ *
+ * Deliberately format-only. Whether a username is *free* is the server's
+ * answer, given when you save — asking as you type would turn the form into a
+ * way to test which handles exist, which is exactly the enumeration the
+ * directory threshold is there to prevent.
+ */
+function checkUsernameFormat() {
+  const input = $('#set-username');
+  const value = input.value.trim().replace(/^@+/, '');
+  if (value !== input.value) input.value = value;
+
+  let problem = null;
+  if (!value) problem = 'Choose a username.';
+  else if (value.length < 3) problem = 'Usernames are at least 3 characters.';
+  else if (!/^[A-Za-z0-9_]+$/.test(value)) problem = 'Letters, numbers and underscores only.';
+  else if (!/[A-Za-z]/.test(value)) problem = 'Usernames need at least one letter.';
+
+  input.setAttribute('aria-invalid', String(!!problem));
+  if (problem) showErr('#username-error', problem);
+  else hideErr('#username-error');
+  return !problem;
+}
+
 async function saveProfile() {
   const btn = $('#btn-save-profile');
   hideErr('#profile-error');
+  hideErr('#username-error');
+  // The handle is the one field with a rule the server will reject outright;
+  // catching it here saves a round trip and points at the right input.
+  if (!checkUsernameFormat()) { $('#set-username').focus(); return; }
   btn.disabled = true;
   $('#profile-saved').textContent = '';
   try {
     const statusText = $('#set-status-text').value.trim();
     const updated = await db.updateProfile({
       name: $('#set-display-name').value,
+      username: $('#set-username').value,
       pronouns: $('#set-pronouns').value,
       title: $('#set-title').value,
       bio: $('#set-bio').value,
@@ -2103,7 +2180,14 @@ async function saveProfile() {
     $('#profile-saved').textContent = 'Saved';
     setTimeout(() => { $('#profile-saved').textContent = ''; }, 2500);
   } catch (err) {
-    showErr('#profile-error', err.message);
+    // A rejected handle belongs beside the handle, not in the form-wide error.
+    if (/username/i.test(err.message)) {
+      showErr('#username-error', err.message);
+      $('#set-username').setAttribute('aria-invalid', 'true');
+      $('#set-username').focus();
+    } else {
+      showErr('#profile-error', err.message);
+    }
   } finally {
     btn.disabled = false;
   }
@@ -2170,6 +2254,7 @@ function wireProfilePanel() {
       renderOwnPreview();
       if (sel === '#set-bio') updateBioCount();
       if (sel === '#set-timezone') updateTzPreview();
+      if (sel === '#set-username') checkUsernameFormat();
     });
   }
   $('#btn-save-profile').addEventListener('click', saveProfile);
@@ -2425,6 +2510,12 @@ function openNewChat() {
 }
 
 async function renderDirectory(q) {
+  // Below the threshold nothing is sent anywhere: you get the people this
+  // browser already knows, and the server is never told what you typed.
+  if (searchTerm(q).length < DIRECTORY_MIN_QUERY) {
+    paintDirectory(familiarPeople(), q, { pending: false, short: true });
+    return;
+  }
   // Cached matches appear immediately so typing stays responsive, then the
   // server's answer replaces them — that is what surfaces accounts this
   // browser has never seen.
@@ -2435,21 +2526,34 @@ async function renderDirectory(q) {
   paintDirectory(mergePeople(remote, q), q, { pending: false });
 }
 
-function paintDirectory(people, q, { pending } = {}) {
+function paintDirectory(people, q, { pending, short } = {}) {
   const list = $('#directory-list');
   list.innerHTML = '';
+
+  // Say why the list is short rather than letting it look like the search
+  // failed. Sits above the results, because there usually are some.
+  if (short) {
+    const note = document.createElement('p');
+    note.className = 'dir-note';
+    note.textContent = people.length
+      ? `Type ${DIRECTORY_MIN_QUERY} or more characters to search everyone — by name or @username.`
+      : `Search for someone by name or @username. Type at least ${DIRECTORY_MIN_QUERY} characters.`;
+    list.append(note);
+  }
+
   if (!people.length) {
-    list.innerHTML = pending
-      ? '<p class="convo-empty">Searching…</p>'
-      : '<p class="convo-empty">Nobody matches that search.</p>';
+    const empty = document.createElement('p');
+    empty.className = 'convo-empty';
+    empty.textContent = pending ? 'Searching…' : 'Nobody matches that search.';
+    if (!short) list.append(empty);
     return;
   }
   let headed = null;
   for (const person of people) {
-    // With no search term, split the directory into your contacts and everyone
-    // else so the people you actually talk to are reachable first.
+    // Before a search, split the list into your contacts and everyone else so
+    // the people you actually talk to are reachable first.
     const bucket = db.isContact(me.id, person.id) ? 'Contacts' : 'Everyone else';
-    if (!q.trim() && bucket !== headed && people.some((p) => db.isContact(me.id, p.id))) {
+    if (short && bucket !== headed && people.some((p) => db.isContact(me.id, p.id))) {
       headed = bucket;
       const h = document.createElement('p');
       h.className = 'dir-heading';

@@ -38,11 +38,22 @@ describe('finding strangers', () => {
     assert.ok(found.body.users.some((u) => u.name === 'Carol Vega'));
   });
 
-  test('an empty query lists people to browse', async () => {
-    const { client: c } = await signUp(srv.base, 'Browser Person', 'browse@dir.test');
-    const all = await c.get('/api/users?q=');
-    assert.ok(all.body.users.length > 0, 'the directory should be browsable');
-    assert.ok(all.body.users.every((u) => u.retired === false));
+  test('a short or empty query returns nobody at all', async () => {
+    await signUp(srv.base, 'Browsable Person', 'browse@dir.test');
+    const { client: c } = await signUp(srv.base, 'Browser Person', 'browser@dir.test');
+
+    // The directory is a lookup, not a member list. Anything under the floor
+    // answers with nothing rather than with everyone.
+    for (const q of ['', ' ', 'b', 'br', '@', '@br']) {
+      const res = await c.get(`/api/users?q=${encodeURIComponent(q)}`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.users, [], `"${q}" must not list anybody`);
+      assert.equal(res.body.minQuery, 3, 'the client is told where the floor is');
+    }
+
+    // Three characters is the floor, and it works.
+    const found = await c.get('/api/users?q=bro');
+    assert.ok(found.body.users.some((u) => u.name === 'Browsable Person'));
   });
 
   test('you can message someone found this way', async () => {
@@ -104,17 +115,49 @@ describe('email privacy in the directory', () => {
   });
 
   test('the directory cannot be used to harvest addresses in bulk', async () => {
+    await signUp(srv.base, 'Harvest Target', 'harvest.target@dir.test');
     const { client: c } = await signUp(srv.base, 'Harvester', 'harvester@dir.test');
-    const all = await c.get('/api/users?q=');
-    const humanStrangers = all.body.users.filter((u) => !u.isBot && !u.isGuest);
+
+    const found = await c.get('/api/users?q=harvest');
+    const humanStrangers = found.body.users.filter((u) => !u.isBot && !u.isGuest);
     assert.ok(humanStrangers.length > 0, 'there are strangers in the results');
     assert.ok(humanStrangers.every((u) => u.email === null),
       'no stranger address may be disclosed');
+
+    // And an address cannot be discovered a fragment at a time: matching on
+    // email is exact, so knowing the domain buys you nothing.
+    const byDomain = await c.get('/api/users?q=dir.test');
+    assert.ok(!byDomain.body.users.some((u) => u.name === 'Harvest Target'),
+      'a partial address must not match');
+    const byLocalPart = await c.get('/api/users?q=harvest.target');
+    assert.ok(!byLocalPart.body.users.some((u) => u.name === 'Harvest Target'),
+      'a local part without its domain must not match either');
+  });
+
+  test('SQL wildcards typed into the query are literal characters', async () => {
+    const viewer = await signUp(srv.base, 'Wildcard Viewer', 'wildcard@dir.test');
+    const target = await signUp(srv.base, 'Underscore Target', 'underscore@dir.test');
+    await target.client.patch('/api/profile', { username: 'ada_l' });
+
+    const exact = await viewer.client.get('/api/users?q=ada_l');
+    assert.ok(exact.body.users.some((u) => u.id === target.user.id), 'the literal handle matches');
+
+    // `_` is "any character" in SQL LIKE and `%` is "any run of them". Typed by
+    // someone probing for near-miss handles, an unescaped one would silently
+    // widen the search to everybody.
+    const wild = await viewer.client.get('/api/users?q=ada%25');
+    assert.ok(!wild.body.users.some((u) => u.id === target.user.id), '% must not be a wildcard');
+    const single = await viewer.client.get('/api/users?q=ada_x');
+    assert.ok(!single.body.users.some((u) => u.id === target.user.id), '_ must not be a wildcard');
+    const sweep = await viewer.client.get('/api/users?q=%25%25%25');
+    assert.deepEqual(sweep.body.users, [], 'a pattern of pure wildcards matches nobody');
   });
 
   test('search still never exposes password material', async () => {
+    await signUp(srv.base, 'Leaky Subject', 'leaky@dir.test');
     const { client: c } = await signUp(srv.base, 'Leak Check', 'leakcheck@dir.test');
-    const res = await c.get('/api/users?q=');
+    const res = await c.get('/api/users?q=leaky');
+    assert.ok(res.body.users.length > 0, 'precondition: something matched');
     for (const u of res.body.users) {
       for (const field of ['pw_hash', 'pw_salt', 'pin_hash', 'pin_salt']) {
         assert.equal(u[field], undefined, `${field} must never be serialised`);

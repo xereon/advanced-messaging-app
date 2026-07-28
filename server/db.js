@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+import { USERNAME_MAX, slugifyUsername, usernameProblem } from './username.js';
+
 let db = null;
 
 export function open(file) {
@@ -24,7 +26,9 @@ export function handle() {
 
 export function close() { db?.close(); db = null; }
 
-function migrate() {
+/** Idempotent: every step is CREATE IF NOT EXISTS, a guarded ALTER, or a
+    backfill that only touches rows still missing the value. */
+export function migrate() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id            TEXT PRIMARY KEY,
@@ -263,6 +267,58 @@ function migrate() {
     timezone: 'TEXT',
     updated_at: 'INTEGER',
   });
+
+  // SQLite cannot add a UNIQUE column, so the constraint is a separate index.
+  // NULLs do not collide in a SQLite unique index, which is what lets the
+  // column exist for a moment before the backfill fills it in.
+  addColumns('users', { username: 'TEXT' });
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+  backfillUsernames();
+}
+
+/**
+ * Give every account that predates usernames one.
+ *
+ * A handle is only useful if you can rely on everyone having it, so this runs
+ * over the existing rows rather than leaving a mix of accounts with and
+ * without. Derived from the display name, with a numeric suffix when that is
+ * taken; a name that survives slugification as nothing (all emoji, all
+ * punctuation, a script this cannot fold) falls back to `user_<n>`.
+ */
+function backfillUsernames() {
+  const rows = db.prepare('SELECT id, name FROM users WHERE username IS NULL').all();
+  if (!rows.length) return;
+  const taken = new Set(
+    db.prepare('SELECT username FROM users WHERE username IS NOT NULL').all().map((r) => r.username),
+  );
+  const set = db.prepare('UPDATE users SET username = ? WHERE id = ?');
+  for (const row of rows) {
+    const name = allocateUsername(slugifyUsername(row.name), taken);
+    taken.add(name);
+    set.run(name, row.id);
+  }
+}
+
+/**
+ * The first free handle at or after `stem`.
+ *
+ * `taken` is the caller's view of what exists. It is only a fast path: the
+ * unique index is what actually guarantees no two accounts share a handle,
+ * because two workers can allocate at the same moment.
+ */
+export function allocateUsername(stem, taken = new Set()) {
+  let base = String(stem || '').slice(0, USERNAME_MAX - 3);
+  if (!base || usernameProblem(base)) base = 'user';
+  if (!taken.has(base) && !isTakenInDb(base)) return base;
+  for (let n = 2; n < 100000; n++) {
+    const candidate = `${base}_${n}`.slice(0, USERNAME_MAX);
+    if (!taken.has(candidate) && !isTakenInDb(candidate)) return candidate;
+  }
+  throw new Error('Could not allocate a username.');
+}
+
+function isTakenInDb(name) {
+  return !!db.prepare('SELECT 1 AS ok FROM users WHERE username = ?').get(name);
 }
 
 /** Add any of `columns` that the table does not already have. */
@@ -308,6 +364,7 @@ export function publicUser(row) {
   return {
     id: row.id,
     name: row.name,
+    username: row.username || null,
     email: row.email,
     role: row.role,
     avatarColor: row.avatar_color,
