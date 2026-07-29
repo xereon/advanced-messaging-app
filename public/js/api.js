@@ -57,6 +57,7 @@ export const blockedUsers = () => get('/blocks');
 export const blockUser = (userId) => post('/blocks', { userId });
 export const unblockUser = (userId) => del(`/blocks/${encodeURIComponent(userId)}`);
 export const submitReport = (payload) => post('/reports', payload);
+export const submitFeedback = (payload) => post('/feedback', payload);
 export const requestReset = (email) => post('/auth/reset/request', { email });
 export const confirmReset = (email, code, password) => post('/auth/reset/confirm', { email, code, password });
 export const renameGroup = (convoId, title) => patch(`/conversations/${encodeURIComponent(convoId)}`, { title });

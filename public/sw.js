@@ -7,7 +7,7 @@
 //
 // Bump CACHE when the shell changes; old caches are dropped on activate.
 
-const CACHE = 'relay-shell-v2';
+const CACHE = 'relay-shell-v3';
 
 const SHELL = [
   '/',
@@ -54,6 +54,12 @@ self.addEventListener('fetch', (event) => {
 
   // The API and the live stream are never cached, and never served stale.
   if (url.pathname.startsWith('/api/')) return;
+
+  // The moderation dashboard is invisible to this worker. Two reasons: the
+  // navigation branch below stores every page it fetches as the app shell, so
+  // an administrator visiting /admin would replace the shell for themselves;
+  // and a report queue must not be left in a disk cache on a shared machine.
+  if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return;
 
   // Navigations: network first so a deployed change is picked up, falling back
   // to the cached shell when there is no network at all.

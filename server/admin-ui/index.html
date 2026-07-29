@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Moderation — Relay</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23B0367A'/%3E%3Cpath d='M16 5l9 3.5v7c0 6.5-9 11.5-9 11.5S7 22 7 15.5v-7L16 5z' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+
+<svg hidden aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></symbol>
+    <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l4 4V7L6 11H4a1 1 0 0 0-1 0z"/><path d="M14 8.5a4 4 0 0 1 0 7"/><path d="M17.5 6a7 7 0 0 1 0 12"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+  </defs>
+</svg>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg>
+    <div>
+      <strong>Moderation</strong>
+      <span class="brand-sub">Relay</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span id="whoami" class="whoami"></span>
+    <button type="button" class="btn" id="btn-refresh">
+      <svg class="icon sm" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh
+    </button>
+    <a class="btn" href="/">
+      <svg class="icon sm" aria-hidden="true"><use href="#i-back"/></svg>Back to Relay
+    </a>
+  </div>
+</header>
+
+<p id="banner" class="banner" role="status" hidden></p>
+
+<nav class="tabs" aria-label="Sections">
+  <button type="button" class="tab" data-tab="queue" aria-current="true">
+    <svg class="icon sm" aria-hidden="true"><use href="#i-flag"/></svg>Reports
+    <span class="pill" id="open-count" hidden></span>
+  </button>
+  <button type="button" class="tab" data-tab="feedback">
+    <svg class="icon sm" aria-hidden="true"><use href="#i-megaphone"/></svg>Feedback
+    <span class="pill" id="feedback-count" hidden></span>
+  </button>
+  <button type="button" class="tab" data-tab="overview">
+    <svg class="icon sm" aria-hidden="true"><use href="#i-shield"/></svg>Overview
+  </button>
+  <button type="button" class="tab" data-tab="audit">
+    <svg class="icon sm" aria-hidden="true"><use href="#i-list"/></svg>Audit log
+  </button>
+</nav>
+
+<main>
+  <!-- Reports -->
+  <section class="panel" data-panel="queue" aria-label="Report queue">
+    <div class="filters" role="group" aria-label="Filter by status">
+      <button type="button" class="chip" data-status="open" aria-pressed="true">Open</button>
+      <button type="button" class="chip" data-status="reviewed" aria-pressed="false">Reviewed</button>
+      <button type="button" class="chip" data-status="actioned" aria-pressed="false">Actioned</button>
+      <button type="button" class="chip" data-status="dismissed" aria-pressed="false">Dismissed</button>
+      <button type="button" class="chip" data-status="all" aria-pressed="false">All</button>
+    </div>
+    <div id="report-list" class="report-list" aria-live="polite"></div>
+  </section>
+
+  <!-- Feedback -->
+  <section class="panel" data-panel="feedback" hidden aria-label="Feedback">
+    <div class="filters" role="group" aria-label="Filter by status">
+      <button type="button" class="chip" data-fb-status="new" aria-pressed="true">New</button>
+      <button type="button" class="chip" data-fb-status="read" aria-pressed="false">Read</button>
+      <button type="button" class="chip" data-fb-status="planned" aria-pressed="false">Planned</button>
+      <button type="button" class="chip" data-fb-status="done" aria-pressed="false">Done</button>
+      <button type="button" class="chip" data-fb-status="declined" aria-pressed="false">Declined</button>
+      <button type="button" class="chip" data-fb-status="all" aria-pressed="false">All</button>
+    </div>
+    <div id="feedback-list" class="report-list" aria-live="polite"></div>
+  </section>
+
+  <!-- Overview -->
+  <section class="panel" data-panel="overview" hidden aria-label="Instance overview">
+    <div id="overview-grid" class="stat-groups"></div>
+    <p class="footnote">
+      Counts only. This dashboard cannot read anyone's conversations — the only
+      message text it ever shows is the snapshot a reporter attached to a report.
+    </p>
+  </section>
+
+  <!-- Audit -->
+  <section class="panel" data-panel="audit" hidden aria-label="Audit log">
+    <p class="footnote">
+      Every administrator action, and every time this dashboard was opened.
+      Append-only: nothing in Relay edits or deletes these rows.
+    </p>
+    <div class="table-scroll">
+      <table class="audit-table">
+        <caption class="visually-hidden">Administrator actions, most recent first</caption>
+        <thead>
+          <tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Detail</th><th scope="col">From</th></tr>
+        </thead>
+        <tbody id="audit-rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
+
+<script type="module" src="/admin/admin.js"></script>
+</body>
+</html>

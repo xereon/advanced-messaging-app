@@ -393,6 +393,7 @@ export async function unblockUser(userId) {
 
 export const blockedUsers = () => api.blockedUsers();
 export const submitReport = (payload) => api.submitReport(payload);
+export const submitFeedback = (payload) => api.submitFeedback(payload);
 
 /* ---------- push notifications ---------- */
 

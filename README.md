@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 210 tests
+npm test     # 294 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -165,7 +165,7 @@ Schedule it with cron: `15 3 * * * /srv/relay/deploy/backup.sh /var/backups/rela
 | `RELAY_ORIGIN` | unset | Extra allowed WebAuthn origin, if the public origin differs from `Host` |
 | `RELAY_RATE_LIMIT` | on | Set to `off` to disable rate limiting (tests only) |
 | `RELAY_SCAN_COMMAND` | unset | External virus scanner for uploads; a non-zero exit rejects the file |
-| `RELAY_ADMIN_EMAIL` | unset | Account marked administrator on boot; the only one that can read abuse reports over the API |
+| `RELAY_ADMIN_EMAIL` | unset | Account marked administrator on boot, granting the moderation dashboard. `npm run admin` does the same from a shell |
 | `RELAY_VAPID_PUBLIC` / `RELAY_VAPID_PRIVATE` | generated | Web Push identity. Generated once and stored on first use; set these to pin it. Changing them invalidates every existing subscription |
 | `RELAY_VAPID_SUBJECT` | `mailto:admin@localhost` | Contact address push services can use to reach you |
 | `RELAY_DEMO_BOTS` | on | Set to `0` on a real deployment. Otherwise four fictional colleagues appear in every new account's conversation list and in search — charming as a demo, odd for strangers signing up on your domain. |
@@ -376,16 +376,72 @@ to undo it.
 
 Reports capture a reason, an optional note, and a *snapshot* of the reported
 message, so evidence survives the sender deleting it. You cannot cite a message
-from a conversation you are not in. Reports are read and resolved from the
-command line:
+from a conversation you are not in. They are reviewed on the moderation
+dashboard below, or from the command line with `npm run reports`.
+
+## Moderation dashboard
+
+A separate page at `/admin`: the report queue, user feedback, an instance
+overview, and the administrator audit log. Grant access from a shell on the
+server —
 
 ```bash
-npm run reports
+npm run admin -- --grant you@example.com
 ```
 
-`npm run reports -- --status all` shows resolved ones too, and
-`npm run reports -- --resolve <id> --status actioned` closes one. Setting
-`RELAY_ADMIN_EMAIL` also lets that account read them over the API.
+`npm run admin` lists administrators and `--revoke` takes it away. Setting
+`RELAY_ADMIN_EMAIL` marks an account on boot, which is the convenient form for a
+container or a Passenger app.
+
+**To everybody else the dashboard does not exist.** Not "forbidden" — absent.
+Each response is byte-for-byte what the same shape of unknown path returns:
+`/admin` gives the ordinary app shell, exactly as `/some-typo` does, because the
+app routes on the client; `/admin/admin.js` gives the same 404 as any other
+missing file; and every `/api/admin/*` route answers with the router's own
+`Unknown endpoint.` A 401 or a 403 would confirm there is something there worth
+attacking, so neither is ever used. Nothing in `index.html` or `ui.js` — both
+served to anyone — mentions the page, and the path itself is only sent to
+accounts that hold the flag.
+
+**Nothing reachable over HTTP can confer the flag.** No route in the app writes
+`users.is_admin`; it comes from the CLI or the environment, both of which need
+access to the server. A stolen session, an administrator's included, cannot
+create a second administrator. Guest sessions are refused outright, since anyone
+can obtain one. The flag is re-read from the database on every request, so
+revoking it takes effect immediately rather than whenever that session expires.
+
+Who *is* an administrator is not public either: the flag appears only on your
+own account, never in search results, profile cards or the cached user list.
+
+**Every action is logged** — actor, action, target, the status transition, IP and
+time — along with each time the dashboard was opened. The log is append-only:
+nothing in Relay edits or deletes a row, and it survives the administrator's
+account being deleted. Refused attempts write nothing, so the trail is
+administrator actions rather than an attack log.
+
+The page is served with `default-src 'none'` and no inline script or style, no
+external origin, `frame-ancestors 'none'`, `no-store` caching, and `noindex`. The
+service worker skips it entirely — a report queue has no business in a disk
+cache. Its client builds every node and sets `textContent`, never `innerHTML`,
+because the strings on that screen are written by the person being reported.
+
+The dashboard reads counts, reports and feedback; it has no enforcement lever
+yet, so "actioned" records a decision you carried out elsewhere (a block, a word
+with the person, an account deletion). Suspension is the obvious next addition.
+
+**Feedback.** *Send feedback* in the account menu opens a short form — what kind
+(an idea, something broken, hard to use, praise, something else) and what
+happened. It arrives in the dashboard's Feedback tab, where it moves through
+new → read → planned → done or declined, each change audited like any other
+administrator action.
+
+Only the sender's display name is attached, so an administrator can reply. No
+user agent, no screen size, nothing about their conversations — a bug report is
+worth less without a browser string, and asking for one is a better trade than
+quietly collecting it. The name is copied into the row rather than only
+referenced, so an idea outlives the account that had it; the dashboard then says
+the account has since been deleted rather than showing a name that resolves to
+nobody.
 
 History loads the most recent 200 messages per conversation, with a **Load
 earlier messages** control that pages backwards while holding your reading

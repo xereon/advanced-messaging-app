@@ -39,7 +39,11 @@ async function enterApp(user) {
     ? {}
     : { lastUserId: user.id, lastUserName: user.name, hasPin: user.hasPin });
   db.hydrate(await api.bootstrap());
-  initUI(user, { onSignOut: () => location.reload() });
+  // The bootstrap's own view of you, not the sign-in response: it is fresher and
+  // it is the complete one. A sign-in reply carries what the form needed, while
+  // bootstrap carries everything the app renders from — including fields the
+  // server only sends to some accounts.
+  initUI(db.currentUser() || user, { onSignOut: () => location.reload() });
 }
 
 function wirePasswordToggle(btnSel, inputSel) {

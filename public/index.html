@@ -59,6 +59,7 @@
     <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></symbol>
     <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></symbol>
     <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+    <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l4 4V7L6 11H4a1 1 0 0 0-1 0z"/><path d="M14 8.5a4 4 0 0 1 0 7"/><path d="M17.5 6a7 7 0 0 1 0 12"/></symbol>
     <symbol id="i-hash" viewBox="0 0 24 24"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></symbol>
   </defs>
 </svg>
@@ -222,6 +223,8 @@
         <button role="menuitem" data-action="profile"><svg class="icon sm" aria-hidden="true"><use href="#i-user"/></svg>Your profile</button>
         <button role="menuitem" data-action="open-settings"><svg class="icon sm" aria-hidden="true"><use href="#i-sliders"/></svg>Settings</button>
         <button role="menuitem" data-action="shortcuts"><svg class="icon sm" aria-hidden="true"><use href="#i-keyboard"/></svg>Keyboard shortcuts</button>
+        <hr>
+        <button role="menuitem" data-action="feedback"><svg class="icon sm" aria-hidden="true"><use href="#i-megaphone"/></svg>Send feedback</button>
         <hr>
         <button role="menuitem" data-action="signout" class="danger-item"><svg class="icon sm" aria-hidden="true"><use href="#i-logout"/></svg>Sign out</button>
       </div>
@@ -520,6 +523,12 @@
       </section>
 
       <section class="settings-panel" data-panel="data" hidden aria-label="Data and privacy settings">
+        <!-- The administrator entry point is built here at runtime, and only
+             when the server said this account is one. It is not in the markup:
+             this file is served to everybody, so anything written here would
+             advertise the dashboard to people who cannot reach it. -->
+        <div id="admin-entry"></div>
+
         <h3>Blocked people</h3>
         <p class="hint">Blocking is mutual: neither of you can message the other, and you disappear from each other's search results. Your old messages are hidden, not deleted.</p>
         <ul class="blocked-list" id="blocked-list" aria-live="polite"></ul>
@@ -711,6 +720,38 @@
     <footer class="dialog-footer">
       <button type="button" class="btn" data-close-dialog>Cancel</button>
       <button type="submit" class="btn primary">Update password</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Send feedback -->
+<dialog id="feedback-dialog" class="dialog sm-dialog" aria-labelledby="feedback-dialog-title">
+  <header class="dialog-header">
+    <h2 id="feedback-dialog-title">Send feedback</h2>
+    <button class="btn icon-btn" data-close-dialog aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <form id="feedback-form" class="dialog-body" method="post" action="/api/auth/no-script" novalidate>
+    <p class="hint">This goes to the people who run this server. Your name is attached so they can reply — nothing else about your account or your conversations is sent.</p>
+    <fieldset class="report-reasons">
+      <legend>What kind of feedback?</legend>
+      <label class="radio-row"><input type="radio" name="feedback-kind" value="idea" checked><span>An idea or request</span></label>
+      <label class="radio-row"><input type="radio" name="feedback-kind" value="bug"><span>Something is broken</span></label>
+      <label class="radio-row"><input type="radio" name="feedback-kind" value="accessibility"><span>Hard to use or read</span></label>
+      <label class="radio-row"><input type="radio" name="feedback-kind" value="praise"><span>Something you like</span></label>
+      <label class="radio-row"><input type="radio" name="feedback-kind" value="other"><span>Something else</span></label>
+    </fieldset>
+    <div class="field">
+      <label for="feedback-message">Tell them about it</label>
+      <textarea id="feedback-message" rows="5" maxlength="2000" required
+                placeholder="What happened, or what would you like to see?"></textarea>
+      <p class="hint"><output id="feedback-remaining">2000</output> characters left</p>
+    </div>
+    <p class="field-error" id="feedback-error" role="alert" hidden></p>
+    <footer class="dialog-footer">
+      <button type="button" class="btn" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn primary">
+        <svg class="icon sm" aria-hidden="true"><use href="#i-send"/></svg>Send
+      </button>
     </footer>
   </form>
 </dialog>

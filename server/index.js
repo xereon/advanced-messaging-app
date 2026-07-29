@@ -19,6 +19,7 @@ import * as webauthn from './webauthn.js';
 import * as files from './files.js';
 import * as mailer from './mailer.js';
 import * as push from './push.js';
+import * as admin from './admin.js';
 import { seedBots, seedConversationsFor, cancelBotTimers } from './bots.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -146,6 +147,75 @@ async function serveStatic(req, res, pathname) {
     if (!extname(filePath)) return serveStatic(req, res, '/index.html');
     fail(res, 404, 'Not found');
   }
+}
+
+/* ---------- the admin dashboard's own files ---------- */
+
+// Deliberately not under public/. Anything in that directory is served to
+// anyone who asks for it by name, so the dashboard's markup and script live
+// outside it and reach the browser only through the gate below.
+const ADMIN_DIR = join(ROOT, 'server', 'admin-ui');
+
+const ADMIN_FILES = {
+  '/admin': 'index.html',
+  '/admin/': 'index.html',
+  '/admin/admin.css': 'admin.css',
+  '/admin/admin.js': 'admin.js',
+};
+
+/**
+ * Serve the dashboard, but only to an administrator.
+ *
+ * A caller without the flag gets the same 404 body that any unknown path
+ * produces, so `/admin` is indistinguishable from a typo. That is the whole
+ * point of the route: signing in as an ordinary user and visiting it should not
+ * reveal that a dashboard exists at all.
+ *
+ * Returns false when the path is not an admin file, so the normal static
+ * handler picks it up.
+ */
+async function serveAdminUi(req, res, pathname, me) {
+  const name = ADMIN_FILES[pathname];
+  if (!name) return false;
+
+  // Hand the request back to the static handler, which answers exactly as it
+  // would for any other path that is not a file: the app shell for /admin,
+  // a 404 for /admin/admin.js. Answering 404 here instead looked equivalent but
+  // was not — every other extensionless path returns the shell, so a bare 404
+  // on /admin was itself the tell that something lives there.
+  if (!admin.isAdmin(me)) return false;
+
+  // Log the page load, not its stylesheet and script — one entry per visit.
+  // "Who opened the report queue, and when" is the question an audit trail for
+  // a moderation tool has to be able to answer.
+  if (name === 'index.html') {
+    admin.logAction(me, 'dashboard.open', { ip: clientIp(req) });
+  }
+
+  const body = await readFile(join(ADMIN_DIR, name));
+  res.writeHead(200, {
+    'Content-Type': MIME[extname(name)] || 'application/octet-stream',
+    'Content-Length': body.length,
+    // Never cached anywhere: a shared machine must not keep a moderation queue
+    // in its disk cache after the administrator signs out.
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Robots-Tag': 'noindex, nofollow, noarchive',
+    // No external anything, no inline anything, no framing, no form posts.
+    'Content-Security-Policy': [
+      "default-src 'none'",
+      "script-src 'self'",
+      "style-src 'self'",
+      "connect-src 'self'",
+      "img-src 'self' data:",
+      "font-src 'self'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "frame-ancestors 'none'",
+    ].join('; '),
+  });
+  res.end(body);
+  return true;
 }
 
 /* ---------- credential hygiene ---------- */
@@ -454,7 +524,7 @@ async function handleApi(req, res, url) {
   /* --- session-bound --- */
   if (path === '/me' && method === 'GET') {
     if (!me) return fail(res, 401, 'Not signed in.');
-    return send(res, 200, { user: auth.publicUser(me), method: session.method });
+    return send(res, 200, { user: db.selfUser(me), method: session.method });
   }
 
   if (path === '/bootstrap' && method === 'GET') return send(res, 200, api.bootstrap(need()));
@@ -549,17 +619,64 @@ async function handleApi(req, res, url) {
   if ((m = path.match(/^\/blocks\/([^/]+)$/)) && method === 'DELETE') {
     return send(res, 200, api.unblockUser(need(), decodeURIComponent(m[1])));
   }
+  if (path === '/feedback' && method === 'POST') {
+    if (!auth.rateLimit(`feedback:${clientIp(req)}`, { limit: 10, windowMs: 60 * 60 * 1000 })) {
+      return fail(res, 429, 'That is a lot of feedback at once. Try again a bit later.');
+    }
+    return send(res, 201, api.submitFeedback(need(), body));
+  }
   if (path === '/reports' && method === 'POST') {
     if (!auth.rateLimit(`report:${clientIp(req)}`, { limit: 20, windowMs: 60 * 60 * 1000 })) {
       return fail(res, 429, 'Too many reports from this address. Try again later.');
     }
     return send(res, 201, api.submitReport(need(), body));
   }
-  if (path === '/reports' && method === 'GET') {
-    return send(res, 200, api.listReports(need(), url.searchParams.get('status') || 'open'));
-  }
-  if ((m = path.match(/^\/reports\/([^/]+)$/)) && method === 'PATCH') {
-    return send(res, 200, api.resolveReport(need(), decodeURIComponent(m[1]), body.status));
+
+  // ---- moderation dashboard ----
+  //
+  // Every route below throws NotFound for anyone without the flag, so this
+  // block behaves as if it were not in the file. Nothing here can grant the
+  // flag: admin is conferred from outside the app, never over HTTP.
+  if (path.startsWith('/admin/')) {
+    // A brute-force attempt against the gate should not also be a free way to
+    // hammer the database, and the limit applies before the flag is read.
+    if (!auth.rateLimit(`admin:${clientIp(req)}`, { limit: 240, windowMs: 60 * 1000 })) {
+      return fail(res, 429, 'Slow down.');
+    }
+    res.setHeader('Cache-Control', 'no-store');
+
+    if (path === '/admin/overview' && method === 'GET') {
+      return send(res, 200, admin.overview(me));
+    }
+    if (path === '/admin/reports' && method === 'GET') {
+      return send(res, 200, admin.listReports(me, {
+        status: url.searchParams.get('status') || 'open',
+        limit: url.searchParams.get('limit'),
+      }));
+    }
+    if ((m = path.match(/^\/admin\/reports\/([^/]+)$/)) && method === 'PATCH') {
+      return send(res, 200, admin.resolveReport(me, decodeURIComponent(m[1]), body.status, {
+        ip: clientIp(req),
+      }));
+    }
+    if (path === '/admin/feedback' && method === 'GET') {
+      return send(res, 200, admin.listFeedback(me, {
+        status: url.searchParams.get('status') || 'new',
+        limit: url.searchParams.get('limit'),
+      }));
+    }
+    if ((m = path.match(/^\/admin\/feedback\/([^/]+)$/)) && method === 'PATCH') {
+      return send(res, 200, admin.resolveFeedback(me, decodeURIComponent(m[1]), body.status, {
+        ip: clientIp(req),
+      }));
+    }
+    if (path === '/admin/audit' && method === 'GET') {
+      return send(res, 200, admin.listAudit(me, url.searchParams.get('limit')));
+    }
+    // An unknown path under /admin must not answer differently for an
+    // administrator than for anybody else.
+    admin.requireAdmin(me);
+    return fail(res, 404, 'Unknown endpoint.');
   }
 
   if (path === '/contacts' && method === 'POST') return send(res, 200, api.addContact(need(), body.contactId));
@@ -622,6 +739,12 @@ export function createApp() {
       // lost its handler — is redirected before it can reach history or a log.
       if (hasSecretInQuery(url)) return scrubCredentialUrl(res, url);
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'Method not allowed.');
+
+      // Before the static handler, which would otherwise fall back to the app
+      // shell for /admin and hand the page to everyone.
+      const session = auth.sessionUser(readCookies(req)[auth.SESSION_COOKIE]);
+      if (await serveAdminUi(req, res, url.pathname, session?.user || null)) return;
+
       return await serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname);
     } catch (err) {
       const status = err.status || 500;

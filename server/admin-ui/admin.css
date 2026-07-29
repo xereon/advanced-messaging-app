@@ -1,0 +1,278 @@
+/* admin.css — the moderation dashboard.
+ *
+ * Deliberately not sharing the app's stylesheet. This page is a different tool
+ * with a different job, and the visual distance is useful: it should never be
+ * mistaken for the messaging UI you happen to be signed into. Self-contained,
+ * so the CSP can forbid every external origin.
+ */
+
+:root {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --sunken: #eef1f7;
+  --border: #d7dde8;
+  --border-strong: #b9c2d4;
+  --text: #16202f;
+  --text-2: #4a5568;
+  --text-3: #6b7688;
+  --accent: #8c2a5e;
+  --accent-soft: #f7e9f0;
+  --danger: #b3261e;
+  --warn: #8a5300;
+  --ok: #1a6b3c;
+  --focus: #8c2a5e;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 4px 12px rgb(16 24 40 / 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1017;
+    --surface: #151a24;
+    --sunken: #1c222e;
+    --border: #2a323f;
+    --border-strong: #3b4553;
+    --text: #e7ebf2;
+    --text-2: #b3bccb;
+    --text-3: #8b96a8;
+    --accent: #e879b0;
+    --accent-soft: #2a1a24;
+    --danger: #ff8a80;
+    --warn: #e0b252;
+    --ok: #6ee7a0;
+    --focus: #e879b0;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.35);
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* The UA stylesheet's `[hidden] { display: none }` does not reach an <svg>,
+   so the icon sprite renders as a 150px blank band above the page. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.icon { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor;
+        stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon.sm { width: 16px; height: 16px; }
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+  padding: 0.85rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 0.65rem; color: var(--accent); }
+.brand strong { display: block; color: var(--text); font-size: 1.0625rem; letter-spacing: -0.01em; }
+.brand-sub { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+.topbar-right { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.whoami { font-size: 0.8125rem; color: var(--text-3); }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  min-height: 2.25rem;
+  font: inherit; font-size: 0.875rem; font-weight: 500;
+  color: var(--text); text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--sunken); border-color: var(--border-strong); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn.sm { min-height: 2rem; padding: 0.3rem 0.6rem; font-size: 0.8125rem; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { .btn.primary { color: #1a0f16; } }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+
+/* ---------- banner and toasts ---------- */
+
+.banner {
+  margin: 0; padding: 0.7rem 1.25rem;
+  background: var(--accent-soft); color: var(--text);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+.toasts { position: fixed; bottom: 1rem; right: 1rem; display: flex; flex-direction: column;
+          gap: 0.5rem; z-index: 50; max-width: min(24rem, calc(100vw - 2rem)); }
+.toast {
+  padding: 0.6rem 0.85rem;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 8px; box-shadow: var(--shadow);
+  font-size: 0.875rem;
+}
+.toast.error { border-left-color: var(--danger); }
+.toast.ok { border-left-color: var(--ok); }
+
+/* ---------- tabs ---------- */
+
+.tabs {
+  display: flex; gap: 0.25rem;
+  padding: 0.6rem 1.25rem 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.tab {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.55rem 0.85rem;
+  font: inherit; font-size: 0.875rem; font-weight: 500;
+  color: var(--text-2); background: none;
+  border: 0; border-bottom: 2px solid transparent;
+  cursor: pointer; white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-current="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.pill {
+  display: inline-block; min-width: 1.35rem; padding: 0.05rem 0.35rem;
+  background: var(--accent); color: #fff;
+  border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-align: center;
+}
+@media (prefers-color-scheme: dark) { .pill { color: #1a0f16; } }
+
+main { max-width: 62rem; margin: 0 auto; padding: 1.25rem; }
+.footnote { color: var(--text-3); font-size: 0.8125rem; margin: 0 0 1rem; }
+
+/* ---------- filters ---------- */
+
+.filters { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.chip {
+  padding: 0.35rem 0.7rem;
+  font: inherit; font-size: 0.8125rem;
+  color: var(--text-2); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 999px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+.chip[aria-pressed="true"] {
+  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+}
+@media (prefers-color-scheme: dark) { .chip[aria-pressed="true"] { color: #1a0f16; } }
+
+/* ---------- reports ---------- */
+
+.report-list { display: flex; flex-direction: column; gap: 0.9rem; }
+
+.report {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+}
+.report-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.report-who { min-width: 0; }
+.report-who strong { font-size: 1rem; }
+.report-who .handle { color: var(--text-3); font-size: 0.875rem; }
+.report-meta { color: var(--text-3); font-size: 0.8125rem; }
+
+.tag {
+  display: inline-block; padding: 0.1rem 0.45rem;
+  border-radius: 5px; font-size: 0.75rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+.tag.reason { color: var(--accent); }
+.tag.status-open { color: var(--warn); }
+.tag.status-reviewed { color: var(--text-2); }
+.tag.status-actioned { color: var(--ok); }
+.tag.status-dismissed { color: var(--text-3); }
+.tag.repeat { color: var(--danger); }
+
+.report-note {
+  margin: 0.7rem 0 0; padding: 0.55rem 0.7rem;
+  background: var(--sunken); border-radius: 8px;
+  font-size: 0.9375rem; overflow-wrap: anywhere;
+}
+.report-quote {
+  margin: 0.7rem 0 0; padding: 0.55rem 0.75rem;
+  border-left: 3px solid var(--border-strong);
+  background: var(--sunken);
+  border-radius: 0 8px 8px 0;
+  color: var(--text-2); font-size: 0.9375rem;
+  max-height: 9rem; overflow-y: auto; overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.quote-label { display: block; font-size: 0.6875rem; text-transform: uppercase;
+               letter-spacing: 0.06em; color: var(--text-3); margin-bottom: 0.2rem; }
+
+.report-facts {
+  display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem;
+  margin: 0.75rem 0 0; padding: 0;
+  color: var(--text-3); font-size: 0.8125rem;
+}
+.report-facts div { display: flex; gap: 0.3rem; }
+.report-facts dt::after { content: ':'; }
+.report-facts dd { margin: 0; color: var(--text-2); }
+
+.report-actions {
+  display: flex; gap: 0.4rem; flex-wrap: wrap;
+  margin-top: 0.9rem; padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+}
+
+.empty {
+  padding: 2.5rem 1rem; text-align: center;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* ---------- overview ---------- */
+
+.stat-groups { display: flex; flex-direction: column; gap: 1.25rem; }
+.stat-group h2 {
+  margin: 0 0 0.6rem; font-size: 0.75rem; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--text-3);
+}
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.7rem; }
+.stat {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0.8rem 0.9rem;
+}
+.stat .n { display: block; font-size: 1.5rem; font-weight: 650; letter-spacing: -0.02em;
+           font-variant-numeric: tabular-nums; }
+.stat .k { display: block; font-size: 0.8125rem; color: var(--text-3); }
+.stat.alert { border-color: var(--warn); }
+.stat.alert .n { color: var(--warn); }
+
+/* ---------- audit ---------- */
+
+.table-scroll { overflow-x: auto; background: var(--surface);
+                border: 1px solid var(--border); border-radius: var(--radius); }
+.audit-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.audit-table th, .audit-table td { padding: 0.55rem 0.7rem; text-align: left; white-space: nowrap; }
+.audit-table th { color: var(--text-3); font-weight: 600; text-transform: uppercase;
+                  font-size: 0.6875rem; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); }
+.audit-table tbody tr + tr td { border-top: 1px solid var(--border); }
+.audit-table td.detail { white-space: normal; color: var(--text-2); }
+.audit-table code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+
+@media (max-width: 560px) {
+  .topbar { padding: 0.7rem 0.9rem; }
+  main, .tabs { padding-left: 0.9rem; padding-right: 0.9rem; }
+  .brand-sub { display: none; }
+  /* Both cost a whole wrapped row on a phone, and neither is why you opened
+     this page. The audit log records who acted, which is where it matters. */
+  .whoami { display: none; }
+  .report-facts { flex-direction: column; gap: 0.2rem; }
+}

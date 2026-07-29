@@ -1,13 +1,14 @@
 // api.js — REST handlers. Every route that touches a conversation proves the
 // caller is a member of it first; nothing trusts an id from the client.
 
-import { handle, tx, nextSeq, currentSeq, publicUser, shapeMessage, shapeConvo } from './db.js';
+import { handle, tx, nextSeq, currentSeq, publicUser, selfUser, shapeMessage, shapeConvo } from './db.js';
 import * as auth from './auth.js';
 import * as rt from './realtime.js';
 import { scheduleBotReply, demoBotsEnabled } from './bots.js';
 import * as files from './files.js';
 import * as push from './push.js';
 import { normalizeUsername, usernameProblem } from './username.js';
+import { ADMIN_PATH } from './admin.js';
 
 const MAX_TEXT = 4000;
 const HISTORY_LIMIT = 200;
@@ -174,7 +175,11 @@ export function bootstrap(me) {
   const settingsRow = db.prepare('SELECT json FROM settings WHERE user_id = ?').get(me.id);
 
   return {
-    me: publicUser(me),
+    // An administrator is told where the dashboard is. Nobody else learns that
+    // there is one to be told about.
+    me: me.is_admin && !me.is_guest
+      ? { ...selfUser(me), adminUrl: ADMIN_PATH }
+      : selfUser(me),
     users: peopleRows.map(publicUser),
     conversations,
     messages,
@@ -417,23 +422,37 @@ export function submitReport(me, { subjectId, convoId, messageId, reason, note }
   return { id, ok: true };
 }
 
-export function listReports(me, status = 'open') {
-  if (!me.is_admin) throw new HttpError(403, 'Reports are only visible to an administrator.');
-  const rows = handle().prepare(
-    `SELECT r.*, reporter.name AS reporter_name, subject.name AS subject_name
-       FROM reports r
-       LEFT JOIN users reporter ON reporter.id = r.reporter_id
-       LEFT JOIN users subject ON subject.id = r.subject_id
-      WHERE r.status = ? ORDER BY r.created_at DESC LIMIT 200`,
-  ).all(status);
-  return { reports: rows };
-}
+// Reading and resolving reports lives in admin.js, which answers 404 rather
+// than 403 so the moderation surface does not confirm its own existence.
 
-export function resolveReport(me, id, status) {
-  if (!me.is_admin) throw new HttpError(403, 'Reports are only visible to an administrator.');
-  if (!['open', 'reviewed', 'actioned', 'dismissed'].includes(status)) bad('Unknown status.');
-  handle().prepare('UPDATE reports SET status = ? WHERE id = ?').run(status, id);
-  return { ok: true };
+/* ---------- feedback ---------- */
+
+const FEEDBACK_KINDS = new Set(['idea', 'bug', 'accessibility', 'praise', 'other']);
+const MAX_FEEDBACK = 2000;
+
+/**
+ * Feedback from the account menu.
+ *
+ * The author's display name is copied in rather than only referenced. Feedback
+ * outlives the session it was written in — someone may act on it months later —
+ * and a row that reads "from a deleted account" with no name attached is not
+ * something you can follow up on.
+ *
+ * Nothing about the browser or the account beyond the name is collected. A bug
+ * report is worth less without a user agent, and asking is a better trade than
+ * quietly gathering one.
+ */
+export function submitFeedback(me, { kind, message }) {
+  if (!FEEDBACK_KINDS.has(kind)) bad('Choose what kind of feedback this is.');
+  const text = String(message ?? '').trim().slice(0, MAX_FEEDBACK);
+  if (!text) bad('Say a little about it first.');
+
+  const id = auth.uid('fb');
+  handle().prepare(
+    `INSERT INTO feedback (id, author_id, author_name, kind, message, status, created_at)
+     VALUES (?,?,?,?,?,'new',?)`,
+  ).run(id, me.id, me.name, kind, text, Date.now());
+  return { id, ok: true };
 }
 
 /* ---------- group management ---------- */

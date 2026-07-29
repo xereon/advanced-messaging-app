@@ -498,6 +498,48 @@ function paintSafety(profile) {
   };
 }
 
+/* ================= feedback ================= */
+
+const FEEDBACK_MAX = 2000;
+
+function openFeedback() {
+  $('#feedback-message').value = '';
+  $('#feedback-remaining').textContent = String(FEEDBACK_MAX);
+  const first = $('#feedback-form input[name="feedback-kind"]');
+  if (first) first.checked = true;
+  hideErr('#feedback-error');
+  $('#feedback-dialog').showModal();
+  $('#feedback-message').focus();
+}
+
+function wireFeedback() {
+  const box = $('#feedback-message');
+  box.addEventListener('input', () => {
+    $('#feedback-remaining').textContent = String(Math.max(FEEDBACK_MAX - box.value.length, 0));
+  });
+
+  $('#feedback-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const message = box.value.trim();
+    if (!message) return showErr('#feedback-error', 'Say a little about it first.');
+
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      await db.submitFeedback({
+        kind: $('#feedback-form input[name="feedback-kind"]:checked')?.value,
+        message,
+      });
+      $('#feedback-dialog').close();
+      toast('Thank you — your feedback was sent.', 'success');
+    } catch (err) {
+      showErr('#feedback-error', err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 /* ================= reporting ================= */
 
 let reportTarget = null;
@@ -1940,6 +1982,50 @@ function syncSettingsInputs() {
   refreshStorageUsage();
   reflectPushState();
   renderBlockedList();
+  reflectAdminEntry();
+}
+
+/**
+ * The moderation link, built only for an administrator.
+ *
+ * The address comes from the server — `me.adminUrl`, sent only to accounts that
+ * hold the flag — rather than being written into this file. index.html and this
+ * script are both served to everyone, so a path hardcoded here would tell any
+ * reader that a dashboard exists. Nothing is authorised on this side either
+ * way: the server decides who gets the page.
+ */
+function reflectAdminEntry() {
+  const entry = $('#admin-entry');
+  if (!entry) return;
+  entry.replaceChildren();
+  if (!me.isAdmin || !me.adminUrl) return;
+
+  const heading = document.createElement('h3');
+  heading.textContent = 'Moderation';
+  const intro = document.createElement('p');
+  intro.className = 'hint';
+  intro.textContent = 'You are an administrator on this server. Abuse reports are reviewed on a separate page.';
+
+  const row = document.createElement('div');
+  row.className = 'security-row';
+  const label = document.createElement('div');
+  const strong = document.createElement('strong');
+  strong.textContent = 'Moderation dashboard';
+  const sub = document.createElement('p');
+  sub.className = 'hint';
+  sub.textContent = 'Report queue, instance overview and the administrator audit log';
+  label.append(strong, sub);
+
+  const link = document.createElement('a');
+  link.className = 'btn';
+  link.href = me.adminUrl;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.innerHTML = '<svg class="icon sm" aria-hidden="true"><use href="#i-shield"/></svg>';
+  link.append('Open');
+
+  row.append(label, link);
+  entry.append(heading, intro, row);
 }
 
 /**
@@ -2840,6 +2926,7 @@ function wireTopbar() {
     closeMenus();
     if (action === 'open-settings') openSettings();
     if (action === 'shortcuts') openSettings('about');
+    if (action === 'feedback') openFeedback();
     if (action === 'signout') doSignOut();
   });
   $('#global-search').addEventListener('input', debounce((e) => renderGlobalSearch(e.target.value.trim()), 150));
@@ -3013,6 +3100,7 @@ export function initUI(user, { onSignOut } = {}) {
   wireTouchMessageActions();
   wireVisualViewport();
   wireGroupDialog();
+  wireFeedback();
   wireNotificationOpens();
   db.connect();
   db.watchConnectivity();

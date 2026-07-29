@@ -245,6 +245,38 @@ export function migrate() {
       count         INTEGER NOT NULL
     );
 
+    -- Feedback from the Send feedback item in the account menu. author_name is
+    -- a snapshot: the point of feedback is that someone can act on it later,
+    -- which a deleted account should not erase, so the row survives with
+    -- author_id nulled and the name intact.
+    CREATE TABLE IF NOT EXISTS feedback (
+      id           TEXT PRIMARY KEY,
+      author_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+      author_name  TEXT,
+      kind         TEXT NOT NULL,
+      message      TEXT NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'new',
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at DESC);
+
+    -- Everything an administrator does, and every time one opens the dashboard.
+    -- Append-only by convention: nothing in the app updates or deletes a row
+    -- here, because a moderation record you can quietly revise is not a record.
+    -- actor_id does not cascade: if the account is deleted the trail must remain.
+    CREATE TABLE IF NOT EXISTS admin_audit (
+      id           TEXT PRIMARY KEY,
+      actor_id     TEXT,
+      actor_name   TEXT,
+      action       TEXT NOT NULL,
+      target_type  TEXT,
+      target_id    TEXT,
+      detail       TEXT,
+      ip           TEXT,
+      at           INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_at ON admin_audit(at DESC);
+
     -- Monotonic counter so clients can resume an SSE stream from a known point.
     CREATE TABLE IF NOT EXISTS counters (
       name   TEXT PRIMARY KEY,
@@ -374,7 +406,10 @@ export function publicUser(row) {
     createdAt: row.created_at,
     lastSeen: row.last_seen,
     hasPin: !!row.pin_hash,
-    isAdmin: !!row.is_admin,
+    // is_admin is deliberately absent. This shape goes out in search results,
+    // profile cards and conversation member lists, so including it would hand
+    // every user a list of which accounts are worth attacking. The flag is
+    // reported only on the self view, by selfUser below.
     pronouns: row.pronouns || null,
     title: row.title || null,
     bio: row.bio || null,
@@ -383,6 +418,18 @@ export function publicUser(row) {
     statusText: statusLive ? (row.status_text || null) : null,
     statusUntil: statusLive ? (row.status_until || null) : null,
   };
+}
+
+/**
+ * What an account is told about itself.
+ *
+ * The only place `isAdmin` appears, and it is a hint for the client's own UI —
+ * nothing is authorised by it. Every admin route re-reads the flag from the
+ * database, so a tampered response buys an attacker a menu item and no access.
+ */
+export function selfUser(row) {
+  if (!row) return null;
+  return { ...publicUser(row), isAdmin: !!row.is_admin };
 }
 
 export function shapeMessage(row, reactions = {}) {

@@ -299,8 +299,10 @@ describe('reporting', () => {
 
   test('reports are invisible to ordinary accounts', async () => {
     const { client: c } = await signUp(srv.base, 'Nosy Reader', 'nosy@block.test');
-    assert.equal((await c.get('/api/reports')).status, 403);
-    assert.equal((await c.patch('/api/reports/r_1', { status: 'dismissed' })).status, 403);
+    // 404, not 403: the moderation surface does not confirm it is there.
+    // test/admin.test.js covers the indistinguishability in full.
+    assert.equal((await c.get('/api/admin/reports')).status, 404);
+    assert.equal((await c.patch('/api/admin/reports/r_1', { status: 'dismissed' })).status, 404);
   });
 
   test('an administrator can list and resolve reports', async () => {
@@ -310,15 +312,15 @@ describe('reporting', () => {
 
     db.handle().prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(a.user.id);
 
-    const list = await a.client.get('/api/reports');
+    const list = await a.client.get('/api/admin/reports');
     assert.equal(list.status, 200);
     const found = list.body.reports.find((r) => r.id === res.body.id);
     assert.ok(found, 'the report is listed');
-    assert.equal(found.reporter_name, 'Bob Admin');
+    assert.equal(found.reporter.name, 'Bob Admin');
 
-    const patched = await a.client.patch(`/api/reports/${res.body.id}`, { status: 'actioned' });
+    const patched = await a.client.patch(`/api/admin/reports/${res.body.id}`, { status: 'actioned' });
     assert.equal(patched.status, 200);
-    const after = await a.client.get('/api/reports');
+    const after = await a.client.get('/api/admin/reports');
     assert.ok(!after.body.reports.some((r) => r.id === res.body.id), 'resolved reports leave the open queue');
   });
 
