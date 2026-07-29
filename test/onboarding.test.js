@@ -131,6 +131,15 @@ describe('the dashboard settings panel', () => {
     assert.ok(!/innerHTML/.test(fn), 'and still no markup interpolation for hostile text');
   });
 
+  test('revealing is a toggle, so it can be put away in the same place', () => {
+    const fn = /function quotedBlock\([\s\S]*?\n\}/.exec(adminJs)?.[0] || '';
+    assert.ok(!/replaceWith/.test(fn),
+      'the button must not be consumed on first click, or there is no way back');
+    assert.match(fn, /shown = !shown/, 'clicking flips it');
+    assert.match(fn, /aria-expanded/, 'and says which state it is in');
+    assert.match(adminCss, /\.reveal\.revealed/, 'with a revealed style that still looks clickable');
+  });
+
   test('start() runs after every declaration it reads', () => {
     // `settings` is a top-level `let`. Calling start() above that line put it in
     // the temporal dead zone and the whole dashboard failed to render — which is

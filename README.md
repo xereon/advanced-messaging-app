@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 377 tests
+npm test     # 378 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -523,7 +523,9 @@ about somebody's own screen.
   rows.
 - **Hide reported message text until clicked.** Whoever reads this queue did not
   choose to be sent the contents of it. One click costs nothing and means an
-  abusive message is not the first thing on screen when the page loads.
+  abusive message is not the first thing on screen when the page loads. Clicking
+  the revealed text puts it away again — the same spot, both directions, so you
+  are not stuck looking at something once you have read it.
 
 **Suspension** is the enforcement lever, offered on the report card itself so
 reading a report and acting on it are the same screen. Pick 24 hours, 7 days,

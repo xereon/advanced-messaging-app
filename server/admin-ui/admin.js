@@ -207,16 +207,25 @@ function quotedBlock(text) {
     return quote;
   }
 
-  const reveal = document.createElement('button');
-  reveal.type = 'button';
-  reveal.className = 'reveal';
-  reveal.textContent = `Show the reported message (${text.length} character${text.length === 1 ? '' : 's'})`;
-  reveal.addEventListener('click', () => {
-    const body = document.createElement('span');
-    body.textContent = text;
-    reveal.replaceWith(body);
-  });
-  quote.append(reveal);
+  // One button that toggles, rather than a button that is consumed. Having read
+  // something unpleasant you should be able to put it away again in the same
+  // place you opened it, without reloading the queue.
+  const closedLabel = `Show the reported message (${text.length} character${text.length === 1 ? '' : 's'})`;
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'reveal';
+  let shown = false;
+
+  const paint = () => {
+    toggle.textContent = shown ? text : closedLabel;
+    toggle.classList.toggle('revealed', shown);
+    toggle.setAttribute('aria-expanded', String(shown));
+    toggle.title = shown ? 'Hide this again' : 'Show the reported message';
+  };
+  paint();
+  toggle.addEventListener('click', () => { shown = !shown; paint(); });
+
+  quote.append(toggle);
   return quote;
 }
 

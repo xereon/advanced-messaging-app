@@ -391,3 +391,16 @@ body[data-compact="true"] .report-list { gap: 0.55rem; }
   cursor: pointer;
 }
 .reveal:hover { color: var(--text); border-color: var(--accent); }
+
+/* Revealed, it should read as the quote it is — but stay obviously clickable,
+   because clicking it again is how you put it away. */
+.reveal.revealed {
+  padding: 0;
+  margin-top: 0.35rem;
+  color: var(--text-2);
+  background: none;
+  border-color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reveal.revealed:hover { color: var(--text); text-decoration: underline; }
