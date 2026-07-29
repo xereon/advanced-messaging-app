@@ -2,6 +2,7 @@
 // Every query is a prepared statement; nothing is string-concatenated.
 
 import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -319,6 +320,18 @@ export function migrate() {
     updated_at: 'INTEGER',
   });
 
+  // Sessions grow a few columns so somebody can see and revoke their own
+  // devices. `id` is an opaque handle: the primary key is a digest of the token,
+  // and while a digest cannot authenticate anybody, handing one to the client is
+  // still a needless thing to explain.
+  addColumns('sessions', {
+    id: 'TEXT',
+    user_agent: 'TEXT',
+    last_seen_at: 'INTEGER',
+  });
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_id ON sessions(id)');
+  backfillSessionIds();
+
   // A keyed hash of the email, because an encrypted address cannot be looked up
   // or kept unique: the ciphertext differs every time it is written. This column
   // is what sign-in, password reset and the exact-address directory match use
@@ -356,6 +369,14 @@ export function migrate() {
   addColumns('users', { username: 'TEXT' });
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)');
   backfillUsernames();
+}
+
+/** Sessions created before the column existed still need a handle to revoke by. */
+function backfillSessionIds() {
+  const rows = db.prepare('SELECT token_hash FROM sessions WHERE id IS NULL').all();
+  if (!rows.length) return;
+  const set = db.prepare('UPDATE sessions SET id = ? WHERE token_hash = ?');
+  for (const row of rows) set.run(`s-${randomUUID()}`, row.token_hash);
 }
 
 /**

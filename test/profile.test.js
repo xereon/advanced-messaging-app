@@ -206,3 +206,52 @@ describe('profile changes reach other people', () => {
     assert.equal(found.statusText, 'Away');
   });
 });
+
+describe('contacts in common', () => {
+  test('counts only people both of you have added', async () => {
+    const me = await signUp(srv.base, 'Mutual Me', 'mut-me@profile.test');
+    const them = await signUp(srv.base, 'Mutual Them', 'mut-them@profile.test');
+    const shared = await signUp(srv.base, 'Shared Friend', 'mut-shared@profile.test');
+    const mineOnly = await signUp(srv.base, 'Mine Only', 'mut-mine@profile.test');
+
+    await me.client.post('/api/contacts', { contactId: shared.user.id });
+    await them.client.post('/api/contacts', { contactId: shared.user.id });
+    await me.client.post('/api/contacts', { contactId: mineOnly.user.id });
+
+    const res = await me.client.get(`/api/users/${them.user.id}`);
+    assert.equal(res.body.mutualContacts, 1);
+  });
+
+  test('neither of you counts as a contact in common', async () => {
+    const me = await signUp(srv.base, 'Selfless Me', 'self-me@profile.test');
+    const them = await signUp(srv.base, 'Selfless Them', 'self-them@profile.test');
+
+    // Each has added the other. That is a direct connection, not a third party
+    // in common, so it must not inflate the count.
+    await me.client.post('/api/contacts', { contactId: them.user.id });
+    await them.client.post('/api/contacts', { contactId: me.user.id });
+
+    const res = await me.client.get(`/api/users/${them.user.id}`);
+    assert.equal(res.body.mutualContacts, 0);
+  });
+
+  test('your own profile reports none rather than counting your whole list', async () => {
+    const me = await signUp(srv.base, 'Own Card', 'own-card@profile.test');
+    const friend = await signUp(srv.base, 'A Friend', 'own-friend@profile.test');
+    await me.client.post('/api/contacts', { contactId: friend.user.id });
+
+    const res = await me.client.get(`/api/users/${me.user.id}`);
+    assert.equal(res.body.mutualContacts, 0);
+  });
+
+  test('a one-sided contact is not mutual', async () => {
+    const me = await signUp(srv.base, 'One Sided', 'one-me@profile.test');
+    const them = await signUp(srv.base, 'Other Side', 'one-them@profile.test');
+    const third = await signUp(srv.base, 'Third Party', 'one-third@profile.test');
+
+    await me.client.post('/api/contacts', { contactId: third.user.id });
+
+    const res = await me.client.get(`/api/users/${them.user.id}`);
+    assert.equal(res.body.mutualContacts, 0);
+  });
+});

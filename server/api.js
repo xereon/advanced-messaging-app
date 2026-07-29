@@ -1010,12 +1010,21 @@ export function getProfile(me, userId) {
   const user = publicUser(row);
   if (!row.is_bot && !shared.length && !isContact && row.id !== me.id) user.email = null;
 
+  // Contacts you both keep. A count rather than a list: who somebody else has in
+  // their contacts is theirs to share, and "two in common" is the useful part.
+  const mutualContacts = row.id === me.id ? 0 : db.prepare(
+    `SELECT COUNT(*) AS n FROM contacts a
+       JOIN contacts b ON b.contact_id = a.contact_id
+      WHERE a.user_id = ? AND b.user_id = ? AND a.contact_id NOT IN (?, ?)`,
+  ).get(me.id, userId, me.id, userId).n;
+
   return {
     user,
     isSelf: row.id === me.id,
     isContact,
     isBlocked: iBlockedThem,
     online: rt.isOnline(row.id) || !!row.is_bot,
+    mutualContacts,
     sharedConversations: shared.map((c) => ({ id: c.id, type: c.type, title: c.title })),
     directConversationId: shared.find((c) => c.type === 'dm')?.id || null,
   };

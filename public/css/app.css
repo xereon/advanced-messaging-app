@@ -1181,6 +1181,9 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .settings-dialog { width: 100%; height: 100%; }
 .settings-dialog[open] { display: flex; flex-direction: column; }
 .settings-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* Search, results and the section list travel together, so the desktop row
+   layout still has exactly two columns. */
+.settings-side { flex: none; display: flex; flex-direction: column; min-height: 0; }
 .settings-nav {
   width: 100%;
   flex: none;
@@ -1463,13 +1466,18 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
 /* ---------- Tablet landscape: room for the settings sidebar ---------- */
 @media (min-width: 900px) {
   .settings-body { flex-direction: row; }
-  .settings-nav {
+  .settings-side {
     width: 13.5rem;
+    border-right: 1px solid var(--border);
+  }
+  .settings-side .settings-search-wrap { border-bottom: 1px solid var(--border); }
+  .settings-nav {
+    width: 100%;
     flex-direction: column;
     overflow-x: visible;
     overflow-y: auto;
     border-bottom: 0;
-    border-right: 1px solid var(--border);
+    border-right: 0;
     padding: 0.75rem 0.5rem;
   }
   .settings-panels { padding: 1.25rem 1.5rem 2rem; }
@@ -1720,7 +1728,31 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   margin: 0 0 1rem;
   font-size: 0.875rem;
 }
+/* The photo is only interactive when there is one to enlarge. */
+.avatar.opens-photo { cursor: zoom-in; }
+.avatar.opens-photo:hover, .avatar.opens-photo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A lightbox, not a dialog inside a dialog: it opens on top of the profile, so
+   it has to cover it rather than sit in the middle of it. */
+.photo-dialog { width: min(92vw, 34rem); }
+.photo-dialog::backdrop { background: rgb(6, 8, 12); opacity: 0.86; }
+.photo-dialog-body { display: flex; align-items: center; justify-content: center; padding: 0 1rem 1rem; }
+.photo-dialog-body img {
+  max-width: 100%;
+  /* Bounded by the viewport, not by the image, so a large photo cannot push the
+     dialog off screen. */
+  max-height: min(70vh, 32rem);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.copy-handle { color: var(--text-3); vertical-align: middle; margin-left: 0.15rem; }
+.copy-handle:hover { color: var(--accent); }
+
 .profile-username {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
   margin: 0.1rem 0 0.15rem;
   color: var(--text-2);
   font-size: 0.9375rem;
@@ -1867,6 +1899,31 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
 .member-row:last-child { border-bottom: 0; }
 .member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.device-list { list-style: none; padding: 0; margin: 0.75rem 0 1rem; }
+.device-row {
+  display: flex; align-items: flex-start; gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.device-row:last-child { border-bottom: 0; }
+.device-row > .icon { color: var(--text-3); margin-top: 0.15rem; flex: none; }
+.device-body { flex: 1; min-width: 0; }
+.device-name { font-weight: 600; font-size: 0.9375rem; }
+.device-meta { color: var(--text-3); font-size: 0.8125rem; }
+/* The one you are holding, so it is obvious which row not to revoke. */
+.device-current {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-soft-text, var(--accent));
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .blocked-list { list-style: none; padding: 0; margin: 0.75rem 0 2rem; }
 .blocked-list .member-row { gap: 0.7rem; }
 .blocked-list .hint { margin: 0; }
@@ -1991,3 +2048,50 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
   padding: 0 0.2rem;
 }
 .msg.mine .mention, .msg.mine .mention-me { color: inherit; text-decoration: underline; background: none; }
+
+
+/* ---------- settings search ---------- */
+
+.settings-search-wrap {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.settings-search-wrap > .icon { color: var(--text-3); flex: none; }
+.settings-search-wrap input {
+  flex: 1; min-width: 0;
+  border: 0; background: none; padding: 0.25rem 0;
+  font-size: 0.9375rem; color: var(--text);
+}
+.settings-search-wrap input:focus-visible { outline: none; }
+.settings-search-wrap:focus-within { box-shadow: inset 0 -2px 0 var(--accent); }
+
+.settings-results {
+  overflow-y: auto;
+  padding: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  max-height: 40vh;
+}
+.settings-result {
+  display: block; width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border: 0; background: none;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  color: var(--text);
+}
+.settings-result:hover, .settings-result:focus-visible { background: var(--sunken); }
+.settings-result-label { display: block; font-size: 0.9375rem; }
+.settings-result-panel {
+  display: block; font-size: 0.75rem; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.settings-results .convo-empty { padding: 0.75rem 0.6rem; }
+
+/* The row jumped to, flashed briefly so the eye lands on it. */
+@keyframes setting-flash {
+  from { background: var(--accent-soft); }
+  to { background: transparent; }
+}
+.setting-found { animation: setting-flash 1.4s ease-out; border-radius: var(--radius-s); }

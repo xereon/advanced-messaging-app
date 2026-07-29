@@ -52,14 +52,21 @@ export async function verifySecret(secret, salt, expectedHex) {
 
 const tokenDigest = (token) => createHash('sha256').update(token).digest('hex');
 
-export function createSession(userId, method, { ttlMs = SESSION_TTL_MS } = {}) {
+export function createSession(userId, method, { ttlMs = SESSION_TTL_MS, userAgent = null } = {}) {
   const token = randomBytes(32).toString('base64url');
   const now = Date.now();
   handle().prepare(
-    'INSERT INTO sessions (token_hash, user_id, method, created_at, expires_at) VALUES (?,?,?,?,?)',
-  ).run(tokenDigest(token), userId, method, now, now + ttlMs);
+    `INSERT INTO sessions (token_hash, id, user_id, method, user_agent, created_at, expires_at, last_seen_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+  ).run(tokenDigest(token), uid('s'), userId, method,
+    userAgent ? String(userAgent).slice(0, 400) : null, now, now + ttlMs, now);
   return { token, expiresAt: now + ttlMs };
 }
+
+// How stale a session's "last used" may get before it is worth a write. Every
+// authenticated request passes through sessionUser, and a database write on each
+// one would be a real cost for a figure nobody needs to the minute.
+const LAST_SEEN_WRITE_AFTER_MS = 5 * 60 * 1000;
 
 export function sessionUser(token) {
   if (!token) return null;
@@ -81,7 +88,77 @@ export function sessionUser(token) {
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
     return null;
   }
+  if (!row.last_seen_at || Date.now() - row.last_seen_at > LAST_SEEN_WRITE_AFTER_MS) {
+    db.prepare('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?').run(Date.now(), row.token_hash);
+  }
   return { user, method: row.method };
+}
+
+/* ---------- the devices you are signed in on ---------- */
+
+/**
+ * Turn a user agent into something a person recognises.
+ *
+ * Deliberately crude. The point is "is this the laptop I am holding or something
+ * I should revoke", which needs a browser and a platform, not a version matrix.
+ * Order matters: Edge and Chrome both claim to be Safari, and Chromium-based
+ * Edge claims to be Chrome, so the most specific string has to be tested first.
+ */
+export function describeDevice(ua) {
+  if (!ua) return 'Unknown device';
+  const browser = [
+    [/Edg\//, 'Edge'], [/OPR\/|Opera/, 'Opera'], [/SamsungBrowser/, 'Samsung Internet'],
+    [/Firefox\//, 'Firefox'], [/Chrome\//, 'Chrome'], [/Safari\//, 'Safari'],
+  ].find(([re]) => re.test(ua))?.[1];
+  const platform = [
+    [/iPhone/, 'iPhone'], [/iPad/, 'iPad'], [/Android/, 'Android'],
+    [/Windows/, 'Windows'], [/Mac OS X|Macintosh/, 'Mac'],
+    [/CrOS/, 'ChromeOS'], [/Linux/, 'Linux'],
+  ].find(([re]) => re.test(ua))?.[1];
+
+  if (browser && platform) return `${browser} on ${platform}`;
+  return browser || platform || 'Unknown device';
+}
+
+const SIGN_IN_METHODS = {
+  password: 'Password', guest: 'Guest', pin: 'Quick-unlock PIN',
+  code: 'Email code', passkey: 'Passkey',
+};
+
+/** Every live session for this account, newest first, with the current one flagged. */
+export function listSessions(userId, currentToken) {
+  const currentHash = currentToken ? tokenDigest(currentToken) : null;
+  return handle().prepare(
+    `SELECT id, token_hash, method, user_agent, created_at, expires_at, last_seen_at
+       FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC`,
+  ).all(userId, Date.now()).map((row) => ({
+    id: row.id,
+    device: describeDevice(row.user_agent),
+    method: SIGN_IN_METHODS[row.method] || row.method,
+    signedInAt: row.created_at,
+    lastSeenAt: row.last_seen_at || row.created_at,
+    expiresAt: row.expires_at,
+    current: !!currentHash && row.token_hash === currentHash,
+  }));
+}
+
+/**
+ * Revoke one session by its handle.
+ *
+ * Scoped to the caller's own rows, so a guessed or borrowed id from another
+ * account does nothing. Returns whether anything was actually removed, so the
+ * route can answer honestly rather than always claiming success.
+ */
+export function revokeSession(userId, id) {
+  return handle().prepare('DELETE FROM sessions WHERE user_id = ? AND id = ?')
+    .run(userId, id).changes > 0;
+}
+
+/** Sign out everywhere except here — the "I lost my phone" button. */
+export function revokeOtherSessions(userId, currentToken) {
+  const keep = currentToken ? tokenDigest(currentToken) : '';
+  return handle().prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?')
+    .run(userId, keep).changes;
 }
 
 export function destroySession(token) {

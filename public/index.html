@@ -360,7 +360,16 @@
     <button class="btn icon-btn" id="settings-close" aria-label="Close settings"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
   </header>
   <div class="settings-body">
-    <nav class="settings-nav" aria-label="Settings sections">
+    <div class="settings-side">
+      <div class="settings-search-wrap">
+        <label for="settings-search" class="visually-hidden">Search settings</label>
+        <svg class="icon sm" aria-hidden="true"><use href="#i-search"/></svg>
+        <input type="search" id="settings-search" placeholder="Search settings…"
+               autocomplete="off" spellcheck="false">
+      </div>
+      <div class="settings-results" id="settings-results" hidden role="listbox"
+           aria-label="Matching settings"></div>
+      <nav class="settings-nav" aria-label="Settings sections">
       <button class="settings-nav-item" data-panel="profile" aria-current="true"><svg class="icon sm" aria-hidden="true"><use href="#i-user"/></svg>Profile</button>
       <button class="settings-nav-item" data-panel="appearance"><svg class="icon sm" aria-hidden="true"><use href="#i-droplet"/></svg>Appearance</button>
       <button class="settings-nav-item" data-panel="accessibility"><svg class="icon sm" aria-hidden="true"><use href="#i-eye"/></svg>Accessibility</button>
@@ -368,7 +377,8 @@
       <button class="settings-nav-item" data-panel="account"><svg class="icon sm" aria-hidden="true"><use href="#i-user"/></svg>Account &amp; security</button>
       <button class="settings-nav-item" data-panel="data"><svg class="icon sm" aria-hidden="true"><use href="#i-database"/></svg>Data &amp; privacy</button>
       <button class="settings-nav-item" data-panel="about"><svg class="icon sm" aria-hidden="true"><use href="#i-info"/></svg>About &amp; shortcuts</button>
-    </nav>
+      </nav>
+    </div>
     <div class="settings-panels">
 
       <section class="settings-panel" data-panel="profile" aria-label="Profile settings">
@@ -571,6 +581,20 @@
             <button class="btn" id="btn-change-password">Change…</button>
           </div>
         </div>
+        <h3>Where you are signed in</h3>
+        <p class="hint">
+          Sessions last 30 days. If you do not recognise one — or signed in
+          somewhere you no longer have — sign it out here.
+        </p>
+        <ul class="device-list" id="device-list" aria-live="polite"></ul>
+        <div class="security-row" id="revoke-others-row" hidden>
+          <div>
+            <strong>Sign out everywhere else</strong>
+            <p class="hint">Keeps this device signed in and ends every other session</p>
+          </div>
+          <button class="btn danger" id="btn-revoke-others">Sign out others</button>
+        </div>
+
         <h3>Session</h3>
         <div class="security-row">
           <div><strong>Sign out</strong><p class="hint">Ends this session on this device</p></div>
@@ -842,6 +866,17 @@
       </button>
     </footer>
   </form>
+</dialog>
+
+<!-- A profile photo, big enough to recognise -->
+<dialog id="photo-dialog" class="dialog photo-dialog" aria-labelledby="photo-dialog-name">
+  <header class="dialog-header">
+    <h2 id="photo-dialog-name"></h2>
+    <button class="btn icon-btn" data-close-dialog aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <div class="photo-dialog-body">
+    <img id="photo-dialog-img" alt="">
+  </div>
 </dialog>
 
 <!-- Report someone -->

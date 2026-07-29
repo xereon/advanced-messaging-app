@@ -417,15 +417,65 @@ function paintProfile(profile, { partial }) {
   const s = getSettings();
 
   const av = $('#profile-avatar');
+  av.replaceChildren();
   av.style.setProperty('--av-bg', user.avatarColor || '#334155');
   av.textContent = initials(user.name);
+  av.classList.toggle('has-photo', !!user.avatarUrl);
+  av.classList.toggle('opens-photo', !!user.avatarUrl);
+  av.removeAttribute('role');
+  av.removeAttribute('tabindex');
+  av.onclick = null;
+
+  if (user.avatarUrl) {
+    const img = document.createElement('img');
+    img.className = 'avatar-img';
+    img.src = user.avatarUrl;
+    img.alt = '';
+    img.addEventListener('error', () => img.remove());
+    av.append(img);
+
+    // A 64px circle is not enough to recognise somebody by. Make it openable,
+    // and as a real button so it is reachable without a pointer.
+    av.setAttribute('role', 'button');
+    av.tabIndex = 0;
+    av.title = `See ${user.name}'s photo`;
+    av.setAttribute('aria-label', `See ${user.name}'s photo full size`);
+    const open = () => openPhotoViewer(user);
+    av.onclick = open;
+    av.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    };
+  }
 
   $('#profile-name').textContent = user.name;
   $('#profile-dialog-heading').textContent = isSelf ? 'Your profile' : 'Profile';
 
   const handle = $('#profile-username');
   handle.hidden = !user.username;
-  handle.textContent = user.username ? `@${user.username}` : '';
+  handle.replaceChildren();
+  if (user.username) {
+    const at = document.createElement('span');
+    at.textContent = `@${user.username}`;
+    handle.append(at);
+
+    // A handle is how you tell somebody who to search for, so make it one tap to
+    // pass on rather than something to be retyped from memory.
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'btn icon-btn sm copy-handle';
+    copy.title = `Copy @${user.username}`;
+    copy.setAttribute('aria-label', `Copy @${user.username}`);
+    copy.innerHTML = '<svg class="icon sm" aria-hidden="true"><use href="#i-copy"/></svg>';
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(`@${user.username}`);
+        toast(`@${user.username} copied`, 'success');
+      } catch {
+        toast('Could not copy — the clipboard is unavailable.', 'error');
+      }
+    });
+    handle.append(copy);
+  }
 
   const meta = [user.pronouns, user.title || (user.isBot ? user.role : null)].filter(Boolean);
   if (user.isGuest) meta.push('Guest');
@@ -448,6 +498,9 @@ function paintProfile(profile, { partial }) {
   if (theirTime) facts.push(['Local time', `${theirTime} · ${user.timezone.replace(/_/g, ' ')}`]);
   if (user.email) facts.push(['Email', user.email]);
   if (user.createdAt) facts.push(['Joined', fmtDay(user.createdAt)]);
+  if (profile.mutualContacts) {
+    facts.push(['Contacts in common', String(profile.mutualContacts)]);
+  }
 
   const dl = $('#profile-facts');
   dl.innerHTML = '';
@@ -634,6 +687,16 @@ function openReport({ subjectId, subjectName, convoId = null, messageId = null, 
   if (first) first.checked = true;
   hideErr('#report-error');
   $('#report-dialog').showModal();
+}
+
+/** The photo at a size you can actually see, dismissed by clicking anywhere. */
+function openPhotoViewer(user) {
+  const dlg = $('#photo-dialog');
+  const img = $('#photo-dialog-img');
+  img.src = user.avatarUrl;
+  img.alt = `${user.name}'s profile photo`;
+  $('#photo-dialog-name').textContent = user.name;
+  dlg.showModal();
 }
 
 function lastSeenLabel(user) {
@@ -2240,6 +2303,7 @@ function syncSettingsInputs() {
   $('#pin-status').textContent = me.hasPin ? 'Enabled for this account' : 'Not set';
   $('#btn-set-pin').textContent = me.hasPin ? 'Change PIN' : 'Set PIN';
   renderPasskeys();
+  renderDevices();
   const pwRow = $('#btn-change-password').closest('.security-row');
   pwRow.hidden = !!me.isGuest;
   refreshStorageUsage();
@@ -2365,6 +2429,94 @@ async function reflectPushState() {
     hint.textContent = 'Notifications are on, but this device is not registered for them yet — '
       + 'switch them off and on again to fix it.';
   }
+}
+
+/**
+ * The devices this account is signed in on.
+ *
+ * Sessions last thirty days, so without this a sign-in on a borrowed or lost
+ * machine could only be undone by changing the password. Each row says what was
+ * used to sign in and when it was last active, because "Chrome on Windows" alone
+ * does not tell you whether it is the one in your hand.
+ */
+async function renderDevices() {
+  const list = $('#device-list');
+  const revokeRow = $('#revoke-others-row');
+  list.replaceChildren();
+
+  let sessions;
+  try {
+    ({ sessions } = await db.listSessions());
+  } catch {
+    const li = document.createElement('li');
+    li.className = 'hint';
+    li.textContent = 'Could not load your devices.';
+    list.append(li);
+    revokeRow.hidden = true;
+    return;
+  }
+
+  revokeRow.hidden = sessions.length < 2;
+
+  for (const session of sessions) {
+    const li = document.createElement('li');
+    li.className = 'device-row';
+
+    // Static markup, no interpolation — safe to set directly.
+    li.insertAdjacentHTML('afterbegin',
+      '<svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>');
+
+    const body = document.createElement('div');
+    body.className = 'device-body';
+    const name = document.createElement('div');
+    name.className = 'device-name';
+    name.textContent = session.device;
+    if (session.current) {
+      const tag = document.createElement('span');
+      tag.className = 'device-current';
+      tag.textContent = 'This device';
+      name.append(tag);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'device-meta';
+    meta.textContent = session.current
+      ? `${session.method} · signed in ${fmtDay(session.signedInAt)}`
+      : `${session.method} · signed in ${fmtDay(session.signedInAt)} · last used ${lastUsedLabel(session.lastSeenAt)}`;
+    body.append(name, meta);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn sm';
+    btn.textContent = session.current ? 'Sign out' : 'Revoke';
+    btn.setAttribute('aria-label', session.current
+      ? 'Sign out on this device'
+      : `Sign out ${session.device}`);
+    btn.addEventListener('click', async () => {
+      if (session.current) { doSignOut(); return; }
+      btn.disabled = true;
+      try {
+        await db.revokeSession(session.id);
+        toast(`${session.device} was signed out.`, 'success');
+        renderDevices();
+      } catch (err) {
+        toast(err.message, 'error');
+        btn.disabled = false;
+      }
+    });
+
+    li.append(body, btn);
+    list.append(li);
+  }
+}
+
+/** "3 minutes ago" for a session, falling back to a date once it is old. */
+function lastUsedLabel(at) {
+  const mins = Math.round((Date.now() - at) / 60000);
+  if (mins < 6) return 'just now';
+  if (mins < 60) return `${mins} minutes ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  return fmtDay(at);
 }
 
 async function renderPasskeys() {
@@ -2703,6 +2855,8 @@ function refreshStorageUsage() {
 function openSettings(panel = 'appearance') {
   syncSettingsInputs();
   switchSettingsPanel(panel);
+  $('#settings-search').value = '';
+  renderSettingsSearch('');
   $('#settings-dialog').showModal();
 }
 
@@ -2715,7 +2869,111 @@ function switchSettingsPanel(name) {
   $('.settings-panels').scrollTop = 0;
 }
 
+/**
+ * Every control in Settings, as searchable text.
+ *
+ * Built from the DOM rather than a hand-kept list, so a control added later is
+ * findable without anybody remembering to register it. Read once and cached: the
+ * rows do not move, and rebuilding on every keystroke would be wasted work.
+ */
+let settingsIndex = null;
+
+function buildSettingsIndex() {
+  const panelNames = new Map(
+    $$('.settings-nav-item').map((b) => [b.dataset.panel, b.textContent.trim()]),
+  );
+
+  settingsIndex = [];
+  for (const panel of $$('.settings-panel')) {
+    const panelId = panel.dataset.panel;
+    // The rows people actually act on. Headings are skipped: matching one would
+    // point at a section rather than a setting.
+    for (const row of panel.querySelectorAll('.setting-row, .security-row, .check-row')) {
+      const label = row.querySelector('label, strong')?.textContent.trim()
+        || row.textContent.trim().slice(0, 60);
+      if (!label) continue;
+      settingsIndex.push({
+        panel: panelId,
+        panelName: panelNames.get(panelId) || panelId,
+        label,
+        // Hints carry the words somebody is likely to search for — "Secure",
+        // "clamscan", "30 days" — so they are worth matching even though they
+        // are not what gets shown as the result's title.
+        haystack: row.textContent.replace(/\s+/g, ' ').toLowerCase(),
+        row,
+      });
+    }
+  }
+}
+
+function renderSettingsSearch(query) {
+  const box = $('#settings-results');
+  const q = String(query || '').trim().toLowerCase();
+
+  if (!q) {
+    box.hidden = true;
+    box.replaceChildren();
+    return;
+  }
+  if (!settingsIndex) buildSettingsIndex();
+
+  const hits = settingsIndex.filter((entry) => entry.haystack.includes(q)).slice(0, 12);
+  box.replaceChildren();
+  box.hidden = false;
+
+  if (!hits.length) {
+    const none = document.createElement('p');
+    none.className = 'convo-empty';
+    none.textContent = `Nothing in Settings matches "${query.trim()}".`;
+    box.append(none);
+    return;
+  }
+
+  for (const hit of hits) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'settings-result';
+    btn.setAttribute('role', 'option');
+
+    const label = document.createElement('span');
+    label.className = 'settings-result-label';
+    label.textContent = hit.label;
+    const where = document.createElement('span');
+    where.className = 'settings-result-panel';
+    where.textContent = hit.panelName;
+    btn.append(label, where);
+
+    btn.addEventListener('click', () => {
+      switchSettingsPanel(hit.panel);
+      $('#settings-search').value = '';
+      renderSettingsSearch('');
+      // Scroll to it and flash it, because a panel can be long enough that
+      // landing on the right one is only half an answer.
+      hit.row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      hit.row.classList.remove('setting-found');
+      // Reflow, or re-adding the class in the same frame does not restart it.
+      void hit.row.offsetWidth;
+      hit.row.classList.add('setting-found');
+      hit.row.querySelector('input, select, textarea, button')?.focus({ preventScroll: true });
+    });
+    box.append(btn);
+  }
+}
+
 function wireSettings() {
+  $('#settings-search').addEventListener('input', (e) => renderSettingsSearch(e.target.value));
+  $('#settings-search').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && e.target.value) {
+      e.stopPropagation();          // do not close the dialog on the first Escape
+      e.target.value = '';
+      renderSettingsSearch('');
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      $('#settings-results .settings-result')?.click();
+    }
+  });
+
   $('#btn-settings').addEventListener('click', () => openSettings());
   $('#settings-close').addEventListener('click', () => $('#settings-dialog').close());
   for (const btn of $$('.settings-nav-item')) {
@@ -2793,6 +3051,26 @@ function wireSettings() {
       setTimeout(() => location.reload(), 1200);
     } catch (err) {
       showErr('#pw-change-err', err.message);
+    }
+  });
+
+  $('#btn-revoke-others').addEventListener('click', async () => {
+    const ok = await confirmDialog(
+      'Sign out everywhere else?',
+      'Every other browser and device signed in to this account will be signed out. This device stays signed in.',
+      'Sign out others',
+    );
+    if (!ok) return;
+    const btn = $('#btn-revoke-others');
+    btn.disabled = true;
+    try {
+      const { revoked } = await db.revokeOtherSessions();
+      toast(revoked === 1 ? 'One other session signed out.' : `${revoked} other sessions signed out.`, 'success');
+      renderDevices();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
     }
   });
 

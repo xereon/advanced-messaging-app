@@ -383,7 +383,12 @@ async function handleApi(req, res, url) {
   const startSession = (user, method_, ttlMs) => {
     const held = db.suspensionOf(user);
     if (held) throw new api.HttpError(403, suspensionMessage(held));
-    const { token, expiresAt } = auth.createSession(user.id, method_, ttlMs ? { ttlMs } : {});
+    const { token, expiresAt } = auth.createSession(user.id, method_, {
+      ...(ttlMs ? { ttlMs } : {}),
+      // Kept so the account holder can tell their own devices apart when
+      // revoking one. Shown to nobody else.
+      userAgent: req.headers['user-agent'] || null,
+    });
     return { 'Set-Cookie': auth.cookieHeader(token, expiresAt, SECURE_COOKIES) };
   };
 
@@ -846,6 +851,31 @@ async function handleApi(req, res, url) {
     });
     if (source.buffer) return res.end(source.buffer);
     return source.stream.pipe(res);
+  }
+
+  /* --- the devices you are signed in on --- */
+
+  if (path === '/account/sessions' && method === 'GET') {
+    const token = cookies[auth.SESSION_COOKIE];
+    return send(res, 200, { sessions: auth.listSessions(need().id, token) });
+  }
+
+  if (path === '/account/sessions' && method === 'DELETE') {
+    const token = cookies[auth.SESSION_COOKIE];
+    const revoked = auth.revokeOtherSessions(need().id, token);
+    return send(res, 200, { revoked });
+  }
+
+  if ((m = path.match(/^\/account\/sessions\/([^/]+)$/)) && method === 'DELETE') {
+    const user = need();
+    const token = cookies[auth.SESSION_COOKIE];
+    const id = decodeURIComponent(m[1]);
+    if (!auth.revokeSession(user.id, id)) return fail(res, 404, 'That device is already signed out.');
+    // Revoking the one you are using is a sign-out, so clear the cookie too
+    // rather than leaving the browser holding a token the server has forgotten.
+    const stillHere = auth.listSessions(user.id, token).some((sn) => sn.current);
+    return send(res, 200, { ok: true, signedOutHere: !stillHere },
+      stillHere ? {} : { 'Set-Cookie': auth.clearCookieHeader() });
   }
 
   if (path === '/contacts' && method === 'POST') return send(res, 200, api.addContact(need(), body.contactId));

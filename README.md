@@ -491,9 +491,17 @@ own after 30 minutes, an hour, four hours, or at the end of the day. Open anyone
 by clicking their name or avatar in a conversation header, or their avatar
 beside a message; open your own from the account menu. A profile shows their
 availability or when they were last seen, their local time so you know whether
-they are awake, groups you have in common, and buttons to message them or add
-them as a contact. You edit your own under **Settings → Profile**, with a live
-preview of the card other people will see.
+they are awake, groups you have in common, **how many contacts you have in
+common**, and buttons to message them or add them as a contact. The count is a
+third-party overlap only: neither of you is included, so somebody you have added
+directly never inflates it, and it stays at zero on your own card. A one-tap
+**copy button beside the handle** puts `@name` on the clipboard, which is the
+form somebody else needs to search for them. **Tapping the photo opens it at a
+size you can recognise** — a 40px circle is not enough to tell two colleagues
+apart — bounded to 70% of the viewport height so a large photo cannot push the
+viewer off screen; closing it returns you to the card rather than dismissing
+everything. You edit your own under **Settings → Profile**, with a live preview
+of the card other people will see.
 
 **Blocking and reporting.** Any profile card carries a Safety row, and any
 message somebody else sent carries a Report action that quotes it.
@@ -699,6 +707,29 @@ focus.
   one.
 
 Settings are stored on your account, so they follow you between devices.
+
+## Settings
+
+**Search across every panel.** Settings has grown past the point where scanning
+six panels for one switch is reasonable, so the search box at the top of the
+dialog finds any control by name and says which panel it lives in. Choosing a
+hit switches panel, scrolls the control into view, flashes it, and focuses it, so
+the thing you searched for is the thing your keyboard is already on. `Enter`
+takes the first hit; `Escape` clears the box before it closes the dialog. The
+index is read from the DOM at open time rather than from a hand-maintained list,
+so a control added later is findable without anyone remembering to register it.
+
+**Active devices.** Under **Account & security**, every signed-in session is
+listed with the browser and platform it is using, when it was first seen and when
+it was last active, with the one you are reading this on marked. Any of them can
+be signed out individually, or all the others at once with **Sign out
+everywhere else**. Revocation is scoped to your own account — a session id
+belonging to somebody else is refused rather than revoked — and takes effect on
+that device's next request, because sessions are re-read per request rather than
+trusted for their lifetime. The device label is derived from the user agent at
+sign-in and stored, so it survives the browser changing its own string later.
+`last_seen_at` is written at most once every five minutes, so an idle tab does
+not turn a read into a write on every poll.
 
 ## Deliberate limits
 

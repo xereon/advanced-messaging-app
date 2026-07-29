@@ -392,6 +392,9 @@ export async function unblockUser(userId) {
 }
 
 export const blockedUsers = () => api.blockedUsers();
+export const listSessions = () => api.listSessions();
+export const revokeSession = (id) => api.revokeSession(id);
+export const revokeOtherSessions = () => api.revokeOtherSessions();
 export const submitReport = (payload) => api.submitReport(payload);
 export const submitFeedback = (payload) => api.submitFeedback(payload);
 

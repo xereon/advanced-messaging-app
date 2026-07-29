@@ -145,6 +145,9 @@ export async function uploadAvatar(original) {
 export const saveSettings = (settings) => put('/settings', { settings });
 export const setPin = (pin) => post('/account/pin', { pin });
 export const changePassword = (current, next) => post('/account/password', { current, next });
+export const listSessions = () => get('/account/sessions');
+export const revokeSession = (id) => del(`/account/sessions/${encodeURIComponent(id)}`);
+export const revokeOtherSessions = () => del('/account/sessions');
 export const deleteAccount = () => del('/account');
 export const exportData = () => get('/export');
 
