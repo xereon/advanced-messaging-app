@@ -237,6 +237,20 @@
     </div>
   </header>
 
+  <!-- Offered once, only when the browser has not been asked yet. The Enable
+       button is what triggers the browser's own permission dialog: some
+       platforms only allow that from inside a user gesture. -->
+  <aside id="notif-prompt" class="notif-prompt" role="region" aria-label="Notifications" hidden>
+    <svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>
+    <p id="notif-prompt-text">
+      Turn on notifications so you hear new messages when Relay is not in front of you.
+    </p>
+    <div class="notif-prompt-actions">
+      <button type="button" class="btn primary sm" id="notif-prompt-enable">Turn on</button>
+      <button type="button" class="btn sm" id="notif-prompt-dismiss">Not now</button>
+    </div>
+  </aside>
+
   <div class="layout">
     <nav id="sidebar" class="sidebar" aria-label="Conversations">
       <div class="sidebar-tabs" role="tablist" aria-label="Filter conversations">
@@ -245,6 +259,11 @@
         <button role="tab" id="tab-pinned" aria-selected="false" data-filter="pinned">Pinned</button>
         <button role="tab" id="tab-contacts" aria-selected="false" data-filter="contacts">Contacts</button>
       </div>
+      <!-- New accounts land on an empty list with no obvious next step, so the
+           way to find somebody is a labelled button rather than only an icon. -->
+      <button type="button" class="btn find-people" id="btn-find-people">
+        <svg class="icon sm" aria-hidden="true"><use href="#i-search"/></svg>Find people
+      </button>
       <div id="convo-list" class="convo-list" role="list"></div>
       <div id="search-results" class="search-results" hidden></div>
     </nav>

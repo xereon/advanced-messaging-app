@@ -1448,6 +1448,32 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
 }
 
 /* ---------- Connection banner ---------- */
+/* Sits between the top bar and the layout, so it pushes content rather than
+   covering it — a bar that overlaps the conversation list gets dismissed
+   without being read. */
+.notif-prompt {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 1rem;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.notif-prompt > .icon { color: var(--accent); flex: none; }
+.notif-prompt p { margin: 0; flex: 1; min-width: 12rem; font-size: 0.875rem; line-height: 1.45; }
+.notif-prompt-actions { display: flex; gap: 0.4rem; flex: none; }
+
+/* A labelled way in, for an account whose conversation list is still empty. */
+.find-people {
+  margin: 0 0.6rem 0.5rem;
+  justify-content: center;
+  border-style: dashed;
+  color: var(--text-2);
+}
+.find-people:hover { color: var(--accent); border-color: var(--accent); border-style: solid; }
+
 .connection-banner {
   position: fixed;
   top: 0;

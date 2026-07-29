@@ -82,6 +82,25 @@ function avatarEl(user, cls = 'avatar') {
   return span;
 }
 
+/**
+ * Let the audio context start on the first interaction.
+ *
+ * Browsers create it suspended and only allow `resume()` from inside a user
+ * gesture. Without this, the chime did nothing at all until the person happened
+ * to click something — which is exactly when they are not waiting to be told.
+ */
+function unlockAudioOnFirstGesture() {
+  const unlock = () => {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch { /* no audio on this device */ }
+  };
+  for (const evt of ['pointerdown', 'keydown']) {
+    window.addEventListener(evt, unlock, { once: true, passive: true });
+  }
+}
+
 function playBlip() {
   if (!getSettings().sounds) return;
   try {
@@ -101,10 +120,32 @@ function playBlip() {
   } catch { /* audio unavailable */ }
 }
 
-function notify(title, body) {
-  if (!getSettings().desktopNotifs || document.hasFocus()) return;
-  if (Notification.permission !== 'granted') return;
-  try { new Notification(title, { body, silent: true }); } catch { /* blocked */ }
+/**
+ * Show a system notification, and let the operating system make its noise.
+ *
+ * Returns whether one was shown, so the caller can play the in-app chime only
+ * when it was not — otherwise an unfocused window makes two sounds at once.
+ *
+ * `silent` used to be set here, which meant the notification appeared with no
+ * sound at all. That is the wrong default for the thing people actually want
+ * from a notification: to be told without looking.
+ */
+function notify(title, body, tag) {
+  if (!getSettings().desktopNotifs || document.hasFocus()) return false;
+  if (!('Notification' in window) || Notification.permission !== 'granted') return false;
+  try {
+    new Notification(title, {
+      body,
+      icon: '/icon.svg',
+      // Repeats from one conversation replace each other rather than stacking,
+      // matching what the service worker does for push.
+      tag: tag || 'relay',
+      renotify: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /* ================= conversation derivations ================= */
@@ -2700,6 +2741,7 @@ function updateNewChatState() {
 function wireNewChat() {
   $('#btn-new-chat').addEventListener('click', openNewChat);
   $('#empty-new-chat').addEventListener('click', openNewChat);
+  $('#btn-find-people').addEventListener('click', openNewChat);
   $('#new-chat-close').addEventListener('click', () => $('#new-chat-dialog').close());
   $('#new-chat-search').addEventListener('input', (e) => renderDirectory(e.target.value));
   $('#group-name').addEventListener('input', updateNewChatState);
@@ -2746,8 +2788,9 @@ function handleIncoming(convoId, msg) {
     } else {
       const meta = db.convoMeta(me.id, convoId);
       if (!meta.muted) {
-        playBlip();
-        notify(author?.name || 'New message', msg.text.slice(0, 120));
+        // One sound, not two: the system notification carries its own.
+        const shown = notify(author?.name || 'New message', msg.text.slice(0, 120), convoId);
+        if (!shown) playBlip();
       }
     }
     announce(`New message from ${author?.name || 'someone'}: ${msg.text.slice(0, 140)}`);
@@ -2916,6 +2959,74 @@ async function doSignOut() {
   try { await db.signOut(); } catch { /* sign out locally regardless */ }
   if (!$('#remember-me')?.checked) db.forgetDevice();
   signOutCb?.();
+}
+
+/**
+ * Offer notifications once, to somebody who has never been asked.
+ *
+ * Not shown when the browser has already decided — `granted` needs nothing and
+ * `denied` cannot be undone from here, only in site settings. Dismissing is
+ * remembered per device, so this is a nudge rather than a nag.
+ *
+ * On iOS this only works for an installed PWA, so the copy changes rather than
+ * offering a button that cannot do anything.
+ */
+function maybeOfferNotifications() {
+  const bar = $('#notif-prompt');
+  if (!bar) return;
+
+  const dismissed = localStorage.getItem('relay.notifPromptDismissed') === '1';
+  if (dismissed || getSettings().desktopNotifs) return;
+
+  if (!('Notification' in window)) {
+    // Safari on iOS exposes Notification only to an installed app.
+    const iosSafari = /iP(hone|ad|od)/.test(navigator.userAgent);
+    if (!iosSafari) return;
+    $('#notif-prompt-text').textContent =
+      'To get notified on iPhone or iPad, add Relay to your home screen first — Share, then'
+      + ' Add to Home Screen. Notifications can be turned on from there.';
+    $('#notif-prompt-enable').hidden = true;
+    bar.hidden = false;
+    return;
+  }
+  if (Notification.permission !== 'default') return;
+  bar.hidden = false;
+}
+
+function wireNotifPrompt() {
+  const bar = $('#notif-prompt');
+  const close = (remember) => {
+    bar.hidden = true;
+    if (remember) localStorage.setItem('relay.notifPromptDismissed', '1');
+  };
+
+  $('#notif-prompt-dismiss').addEventListener('click', () => close(true));
+
+  $('#notif-prompt-enable').addEventListener('click', async () => {
+    const btn = $('#notif-prompt-enable');
+    btn.disabled = true;
+    try {
+      // Inside the click, because a permission request outside a user gesture is
+      // refused outright on some platforms.
+      const granted = await ensureNotifPermission();
+      if (!granted) {
+        $('#notif-prompt-text').textContent =
+          'Your browser is blocking notifications for this site. Allow them in its site'
+          + ' settings, then try again from Settings → Chat & notifications.';
+        btn.hidden = true;
+        return;
+      }
+      setSetting('desktopNotifs', true);
+      syncSettingsInputs();
+      // Registering for push is what makes a message arrive with Relay closed.
+      try { await db.enablePush(); } catch { /* works while open regardless */ }
+      close(true);
+      toast('Notifications are on. You will hear new messages.', 'success');
+      notify('Notifications are on', 'This is what a new message will look like.', 'relay-test');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 function wireTopbar() {
@@ -3101,6 +3212,9 @@ export function initUI(user, { onSignOut } = {}) {
   wireVisualViewport();
   wireGroupDialog();
   wireFeedback();
+  wireNotifPrompt();
+  unlockAudioOnFirstGesture();
+  maybeOfferNotifications();
   wireNotificationOpens();
   db.connect();
   db.watchConnectivity();

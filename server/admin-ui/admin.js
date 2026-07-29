@@ -62,6 +62,8 @@ const fmtWhen = (ms) => (ms ? DATE.format(new Date(ms)) : '—');
 /** "3 hours ago" — how fresh a report is matters more than its timestamp. */
 function fmtAgo(ms) {
   if (!ms) return '';
+  // Some people would rather read a clock than do the arithmetic themselves.
+  if (settings.absoluteTimes) return fmtWhen(ms);
   const mins = Math.round((Date.now() - ms) / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins} min ago`;
@@ -167,15 +169,7 @@ function reportCard(report) {
   }
 
   if (report.quotedMessage) {
-    const quote = document.createElement('blockquote');
-    quote.className = 'report-quote';
-    const label = document.createElement('span');
-    label.className = 'quote-label';
-    label.textContent = 'Reported message, as it was when filed';
-    const text = document.createElement('span');
-    text.textContent = report.quotedMessage;
-    quote.append(label, text);
-    card.append(quote);
+    card.append(quotedBlock(report.quotedMessage));
   }
 
   const facts = document.createElement('dl');
@@ -189,6 +183,41 @@ function reportCard(report) {
 
   card.append(actionsFor(report));
   return card;
+}
+
+/**
+ * The reported message, optionally behind a click.
+ *
+ * Whoever reads this queue did not choose to be sent the content in it. Hiding
+ * it until asked costs one click and means an abusive message is not the first
+ * thing on screen when the page loads.
+ */
+function quotedBlock(text) {
+  const quote = document.createElement('blockquote');
+  quote.className = 'report-quote';
+  const label = document.createElement('span');
+  label.className = 'quote-label';
+  label.textContent = 'Reported message, as it was when filed';
+  quote.append(label);
+
+  if (!settings.blurReported) {
+    const body = document.createElement('span');
+    body.textContent = text;
+    quote.append(body);
+    return quote;
+  }
+
+  const reveal = document.createElement('button');
+  reveal.type = 'button';
+  reveal.className = 'reveal';
+  reveal.textContent = `Show the reported message (${text.length} character${text.length === 1 ? '' : 's'})`;
+  reveal.addEventListener('click', () => {
+    const body = document.createElement('span');
+    body.textContent = text;
+    reveal.replaceWith(body);
+  });
+  quote.append(reveal);
+  return quote;
 }
 
 const NEXT_STATUS = [
@@ -294,6 +323,10 @@ function wireSuspend() {
 async function unsuspend(user) {
   await call('DELETE', `/admin/users/${encodeURIComponent(user.id)}/suspension`);
   toast(`${user.name} can sign in again.`, 'ok');
+  // Reflect the chosen tab in the chrome before loading it.
+  for (const btn of $$('.tab')) btn.setAttribute('aria-current', String(btn.dataset.tab === tab));
+  for (const panel of $$('.panel')) panel.hidden = panel.dataset.panel !== tab;
+
   await Promise.all([refresh(), loadCounts()]);
 }
 
@@ -761,6 +794,14 @@ async function refresh() {
 /* ---------- start ---------- */
 
 async function start() {
+  // Before the first render, so nothing paints with the wrong accent and then
+  // jumps, and so the chosen tab is the one that loads.
+  loadSettings();
+  applyScheme();
+  applySettings();
+  wireSettings();
+  if (LOADERS[settings.tab]) tab = settings.tab;
+
   for (const btn of $$('.tab')) {
     btn.addEventListener('click', () => show(btn.dataset.tab));
   }
@@ -786,4 +827,238 @@ async function start() {
   await Promise.all([refresh(), loadCounts()]);
 }
 
+
+/* ---------- dashboard settings ---------- */
+
+// Kept in this browser, not on the server. These are one administrator's
+// preferences about their own screen; storing them server-side would mean
+// deciding whose win when two people share an account, for no benefit.
+const SETTINGS_KEY = 'relay.admin.settings';
+
+const DEFAULT_ACCENT = { light: [140, 42, 94], dark: [232, 121, 176] };
+
+const DEFAULTS = {
+  theme: 'auto',
+  accent: null,        // null means "whatever the stylesheet says for this scheme"
+  refresh: 0,          // seconds; 0 is manual
+  tab: 'queue',
+  absoluteTimes: false,
+  compact: false,
+  blurReported: false,
+};
+
+let settings = { ...DEFAULTS };
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) settings = { ...DEFAULTS, ...JSON.parse(raw) };
+  } catch { settings = { ...DEFAULTS }; }
+  return settings;
+}
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* private mode */ }
+}
+
+const prefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+const effectiveDark = () => (settings.theme === 'auto' ? prefersDark() : settings.theme === 'dark');
+
+/**
+ * Relative luminance, for the contrast note beside the sliders.
+ *
+ * The accent is used for text and for button fills, so a colour that looks
+ * pleasant can still be unreadable. Saying so is cheaper than letting somebody
+ * pick a pale yellow and then wonder why the tab labels vanished.
+ */
+function luminance([r, g, b]) {
+  const f = (v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+function contrastAgainstSurface(rgb) {
+  // The surface the accent sits on, per scheme, from the stylesheet.
+  const surface = effectiveDark() ? [21, 26, 36] : [255, 255, 255];
+  const [a, b] = [luminance(rgb), luminance(surface)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+}
+
+const currentAccent = () => settings.accent || DEFAULT_ACCENT[effectiveDark() ? 'dark' : 'light'];
+
+/** Push the settings into the document. The CSS reads them from there. */
+function applySettings() {
+  const root = document.documentElement;
+  root.dataset.theme = settings.theme;
+  // Overriding the media query needs an explicit colour-scheme, or a forced
+  // light theme keeps the browser's dark form controls.
+  root.style.colorScheme = settings.theme === 'auto' ? 'light dark' : settings.theme;
+
+  const [r, g, b] = currentAccent();
+  root.style.setProperty('--accent-r', r);
+  root.style.setProperty('--accent-g', g);
+  root.style.setProperty('--accent-b', b);
+
+  document.body.dataset.compact = String(settings.compact);
+  startAutoRefresh();
+}
+
+/* --- forced light/dark --- */
+
+// The stylesheet expresses dark mode as a media query, which an in-page toggle
+// cannot override. This mirrors those values under an attribute so a forced
+// choice wins, without duplicating the whole palette.
+const DARK_VARS = {
+  '--bg': '#0d1017', '--surface': '#151a24', '--sunken': '#1c222e',
+  '--border': '#2a323f', '--border-strong': '#3b4553',
+  '--text': '#e7ebf2', '--text-2': '#b3bccb', '--text-3': '#8b96a8',
+  '--accent-soft': '#2a1a24', '--danger': '#ff8a80', '--warn': '#e0b252', '--ok': '#6ee7a0',
+  '--shadow': '0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.35)',
+};
+const LIGHT_VARS = {
+  '--bg': '#f4f6fa', '--surface': '#ffffff', '--sunken': '#eef1f7',
+  '--border': '#d7dde8', '--border-strong': '#b9c2d4',
+  '--text': '#16202f', '--text-2': '#4a5568', '--text-3': '#6b7688',
+  '--accent-soft': '#f7e9f0', '--danger': '#b3261e', '--warn': '#8a5300', '--ok': '#1a6b3c',
+  '--shadow': '0 1px 2px rgb(16 24 40 / 0.06), 0 4px 12px rgb(16 24 40 / 0.05)',
+};
+
+function applyScheme() {
+  const root = document.documentElement;
+  const vars = settings.theme === 'auto' ? null : (settings.theme === 'dark' ? DARK_VARS : LIGHT_VARS);
+  for (const key of Object.keys({ ...DARK_VARS })) root.style.removeProperty(key);
+  if (!vars) return;
+  for (const [key, value] of Object.entries(vars)) root.style.setProperty(key, value);
+}
+
+/* --- auto refresh --- */
+
+let refreshTimer = null;
+
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = null;
+  if (!settings.refresh) return;
+  refreshTimer = setInterval(() => {
+    // Not while a dialog is open: pulling the list out from under somebody
+    // mid-decision is worse than a stale count.
+    if (document.querySelector('dialog[open]')) return;
+    Promise.all([refresh(), loadCounts()]).catch(() => {});
+  }, settings.refresh * 1000);
+}
+
+/* --- the panel --- */
+
+function fillSettingsForm() {
+  const [r, g, b] = currentAccent();
+  document.querySelector(`#settings-form input[name="ds-theme"][value="${settings.theme}"]`).checked = true;
+  $('#ds-r').value = r;
+  $('#ds-g').value = g;
+  $('#ds-b').value = b;
+  $('#ds-refresh').value = String(settings.refresh);
+  $('#ds-tab').value = settings.tab;
+  $('#ds-absolute').checked = settings.absoluteTimes;
+  $('#ds-compact').checked = settings.compact;
+  $('#ds-blur').checked = settings.blurReported;
+  paintSwatch();
+}
+
+const hex = ([r, g, b]) => '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+
+function paintSwatch() {
+  const rgb = [Number($('#ds-r').value), Number($('#ds-g').value), Number($('#ds-b').value)];
+  $('#ds-r-out').textContent = rgb[0];
+  $('#ds-g-out').textContent = rgb[1];
+  $('#ds-b-out').textContent = rgb[2];
+  $('#ds-hex').textContent = `${hex(rgb)}  ·  rgb(${rgb.join(' ')})`;
+  $('#ds-swatch').style.background = `rgb(${rgb.join(' ')})`;
+
+  const ratio = contrastAgainstSurface(rgb);
+  const note = $('#ds-contrast');
+  if (ratio >= 4.5) {
+    note.textContent = `Contrast ${ratio.toFixed(1)}:1 — passes AA for text.`;
+  } else if (ratio >= 3) {
+    note.textContent = `Contrast ${ratio.toFixed(1)}:1 — fine for borders and fills, too low for small text.`;
+  } else {
+    note.textContent = `Contrast ${ratio.toFixed(1)}:1 — labels in this colour will be hard to read.`;
+  }
+}
+
+function wireSettings() {
+  $('#btn-settings').addEventListener('click', () => {
+    fillSettingsForm();
+    $('#settings-dialog').showModal();
+  });
+
+  for (const radio of $$('#settings-form input[name="ds-theme"]')) {
+    radio.addEventListener('change', () => {
+      settings.theme = radio.value;
+      // A forced scheme changes which default accent applies, so re-read it.
+      applyScheme();
+      applySettings();
+      fillSettingsForm();
+      saveSettings();
+    });
+  }
+
+  for (const id of ['#ds-r', '#ds-g', '#ds-b']) {
+    $(id).addEventListener('input', () => {
+      settings.accent = [Number($('#ds-r').value), Number($('#ds-g').value), Number($('#ds-b').value)];
+      paintSwatch();
+      applySettings();
+      saveSettings();
+    });
+  }
+
+  $('#ds-reset-colour').addEventListener('click', () => {
+    settings.accent = null;
+    applySettings();
+    fillSettingsForm();
+    saveSettings();
+  });
+
+  $('#ds-refresh').addEventListener('change', () => {
+    settings.refresh = Number($('#ds-refresh').value);
+    applySettings();
+    saveSettings();
+  });
+
+  $('#ds-tab').addEventListener('change', () => {
+    settings.tab = $('#ds-tab').value;
+    saveSettings();
+  });
+
+  for (const [id, key] of [['#ds-absolute', 'absoluteTimes'], ['#ds-compact', 'compact'], ['#ds-blur', 'blurReported']]) {
+    $(id).addEventListener('change', () => {
+      settings[key] = $(id).checked;
+      applySettings();
+      saveSettings();
+      // These change how rows are built, so the visible list has to be rebuilt.
+      if (key !== 'compact') refresh().catch(() => {});
+    });
+  }
+
+  $('#ds-restore').addEventListener('click', () => {
+    settings = { ...DEFAULTS };
+    applyScheme();
+    applySettings();
+    fillSettingsForm();
+    saveSettings();
+    refresh().catch(() => {});
+    toast('Defaults restored.', 'ok');
+  });
+
+  // Following the system means following it as it changes.
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (settings.theme === 'auto') { applySettings(); }
+  });
+}
+
+/* ---------- go ---------- */
+
+// Last line on purpose. start() reads `settings`, a `let` declared above in this
+// file — invoking it before that line executes hits the temporal dead zone and
+// the whole dashboard fails to render.
 start();

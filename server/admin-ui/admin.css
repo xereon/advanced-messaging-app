@@ -7,6 +7,11 @@
  */
 
 :root {
+  /* The accent is a variable so the settings panel can drive it from three
+     sliders without touching anything else. */
+  --accent-r: 140;
+  --accent-g: 42;
+  --accent-b: 94;
   --bg: #f4f6fa;
   --surface: #ffffff;
   --sunken: #eef1f7;
@@ -15,18 +20,21 @@
   --text: #16202f;
   --text-2: #4a5568;
   --text-3: #6b7688;
-  --accent: #8c2a5e;
+  --accent: rgb(var(--accent-r) var(--accent-g) var(--accent-b));
   --accent-soft: #f7e9f0;
   --danger: #b3261e;
   --warn: #8a5300;
   --ok: #1a6b3c;
-  --focus: #8c2a5e;
+  --focus: rgb(var(--accent-r) var(--accent-g) var(--accent-b));
   --radius: 10px;
   --shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 4px 12px rgb(16 24 40 / 0.05);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --accent-r: 232;
+    --accent-g: 121;
+    --accent-b: 176;
     --bg: #0d1017;
     --surface: #151a24;
     --sunken: #1c222e;
@@ -35,12 +43,12 @@
     --text: #e7ebf2;
     --text-2: #b3bccb;
     --text-3: #8b96a8;
-    --accent: #e879b0;
+    --accent: rgb(var(--accent-r) var(--accent-g) var(--accent-b));
     --accent-soft: #2a1a24;
     --danger: #ff8a80;
     --warn: #e0b252;
     --ok: #6ee7a0;
-    --focus: #e879b0;
+    --focus: rgb(var(--accent-r) var(--accent-g) var(--accent-b));
     --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.35);
   }
 }
@@ -319,3 +327,67 @@ dialog legend { padding: 0; font-weight: 600; font-size: 0.875rem; margin-bottom
   .whoami { display: none; }
   .report-facts { flex-direction: column; gap: 0.2rem; }
 }
+
+
+/* ---------- dashboard settings ---------- */
+
+.btn.icon-only { padding: 0.45rem; min-width: 2.25rem; justify-content: center; }
+
+.swatch-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.swatch-preview {
+  width: 2rem; height: 2rem; flex: none;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--accent);
+}
+.swatch-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem; color: var(--text-2);
+  flex: 1;
+}
+
+.slider-row {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.3rem 0;
+  font-size: 0.875rem;
+}
+.slider-row > span:first-child { flex: none; width: 3.6rem; color: var(--text-2); }
+.slider-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.slider-row output {
+  flex: none; width: 2.5rem; text-align: right;
+  font-variant-numeric: tabular-nums; color: var(--text-3); font-size: 0.8125rem;
+}
+.slider-row select {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  font: inherit; font-size: 0.875rem;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+
+.check-row {
+  display: flex; align-items: flex-start; gap: 0.55rem;
+  padding: 0.35rem 0; font-size: 0.9375rem; cursor: pointer;
+}
+.check-row input { flex: none; width: 1.05rem; height: 1.05rem; margin-top: 0.2rem; accent-color: var(--accent); }
+.check-row .footnote { display: inline; margin: 0; }
+
+/* Compact rows: same information, less of the page. */
+body[data-compact="true"] .report { padding: 0.7rem 0.8rem; }
+body[data-compact="true"] .report-note,
+body[data-compact="true"] .report-quote { margin-top: 0.45rem; padding: 0.4rem 0.6rem; }
+body[data-compact="true"] .report-facts { margin-top: 0.5rem; }
+body[data-compact="true"] .report-actions { margin-top: 0.6rem; padding-top: 0.55rem; }
+body[data-compact="true"] .report-list { gap: 0.55rem; }
+
+/* Reported text hidden until asked for. Kept as a real button so it is
+   reachable by keyboard, not just a click target. */
+.reveal {
+  display: block; width: 100%;
+  font: inherit; text-align: left;
+  color: var(--text-3); background: var(--sunken);
+  border: 1px dashed var(--border-strong); border-radius: 8px;
+  padding: 0.6rem 0.75rem; margin-top: 0.7rem;
+  cursor: pointer;
+}
+.reveal:hover { color: var(--text); border-color: var(--accent); }

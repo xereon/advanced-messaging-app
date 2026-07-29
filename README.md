@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 361 tests
+npm test     # 377 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -346,10 +346,26 @@ inline, behind `Content-Disposition`, `nosniff` and a `default-src 'none'; sandb
 CSP. Downloads are membership-checked, and deleting a message deletes its files.
 
 **Notifications reach you with the app closed.** Relay is installable, and
-turning notifications on in Settings registers the device for Web Push — VAPID
-signing and RFC 8291 payload encryption, so the push service relays a body it
-cannot read. Tapping a notification focuses an open tab rather than launching a
-duplicate. Messages you send with no connection are held in an outbox that
+turning notifications on registers the device for Web Push — VAPID signing and
+RFC 8291 payload encryption, so the push service relays a body it cannot read.
+Tapping a notification focuses an open tab rather than launching a duplicate.
+
+New accounts are **asked once**, by a bar under the top bar, because a setting
+nobody finds is a setting nobody turns on. The button is what triggers the
+browser's own permission dialog — some platforms only allow that from inside a
+user gesture — and "Not now" is remembered per device. It is not shown when the
+browser has already decided: `granted` needs nothing, and `denied` cannot be
+undone from a web page, only in site settings, so the copy says that instead of
+offering a button that would do nothing. On iPhone and iPad it explains that
+Relay has to be added to the home screen first, since Safari only exposes
+notifications to an installed app.
+
+Notifications make a sound. They previously did not — `silent: true` was set on
+every one, which is the wrong default for the thing people want from a
+notification. Only one sound plays: the in-app chime is skipped whenever the
+system notification fires. The chime also needed unblocking, since browsers
+create an `AudioContext` suspended and only allow it to start from a user
+gesture, so it silently did nothing until you happened to click something. Messages you send with no connection are held in an outbox that
 survives a reload and flushes when the network returns.
 
 Live delivery with distinct status icons (sending, sent ✓, delivered ✓✓, read),
@@ -359,6 +375,10 @@ replies with quoting, editing, deleting, per-conversation drafts, pinning,
 muting, unread badges and dividers, groups, message formatting
 (`**bold**`, `*italic*`, `` `code` ``, auto-links), day separators, and JSON
 export of everything the server holds about you.
+
+**Finding people.** The sidebar carries a labelled **Find people** button, not
+only a compose icon. A new account arrives with an empty list and no obvious
+next step; an icon is discoverable to whoever already knows what it does.
 
 Search covers conversations, **people** and full message history, with a
 separate in-conversation search that cycles matches.
@@ -485,6 +505,25 @@ the login route, it issues no session, and the limit of one appeal per suspensio
 is a rule rather than a throttle: the table's primary key is
 `(user_id, suspended_at)`, so the queue cannot be flooded by the account it is
 about. A *new* suspension is a new thing to appeal.
+
+**Dashboard settings** live behind the cog, and belong to one administrator in
+one browser — nothing there is sent to the server, because these are preferences
+about somebody's own screen.
+
+- **Accent colour** on three RGB sliders, with the contrast ratio against the
+  panel behind it shown live and labelled *passes AA* / *fine for borders* /
+  *hard to read*. The accent is used for text and for button fills, so a colour
+  that looks pleasant can still be unreadable; saying so beats letting somebody
+  pick a pale yellow and wonder where the tab labels went.
+- **Light, dark or follow the system**, which keeps following it as it changes.
+- **Auto-refresh** the queue, or only on request. It pauses while a dialog is
+  open — pulling the list out from under somebody mid-decision is worse than a
+  stale count.
+- **Which tab opens first**, exact times instead of "2 hours ago", and compact
+  rows.
+- **Hide reported message text until clicked.** Whoever reads this queue did not
+  choose to be sent the contents of it. One click costs nothing and means an
+  abusive message is not the first thing on screen when the page loads.
 
 **Suspension** is the enforcement lever, offered on the report card itself so
 reading a report and acting on it are the same screen. Pick 24 hours, 7 days,

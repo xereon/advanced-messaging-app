@@ -20,6 +20,7 @@
     <symbol id="i-list" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
     <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
+    <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
   </defs>
 </svg>
@@ -36,6 +37,10 @@
     <span id="whoami" class="whoami"></span>
     <button type="button" class="btn" id="btn-refresh">
       <svg class="icon sm" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh
+    </button>
+    <button type="button" class="btn icon-only" id="btn-settings" aria-label="Dashboard settings"
+            title="Dashboard settings" aria-expanded="false">
+      <svg class="icon" aria-hidden="true"><use href="#i-cog"/></svg>
     </button>
     <a class="btn" href="/">
       <svg class="icon sm" aria-hidden="true"><use href="#i-back"/></svg>Back to Relay
@@ -142,6 +147,84 @@
     </div>
   </section>
 </main>
+
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+  <form id="settings-form" method="dialog">
+    <h2 id="settings-title">Dashboard settings</h2>
+    <p class="footnote">
+      Yours alone, kept in this browser. Nothing here changes what anybody else
+      sees, and none of it is sent to the server.
+    </p>
+
+    <fieldset>
+      <legend>Appearance</legend>
+      <label class="radio-row"><input type="radio" name="ds-theme" value="auto"><span>Match the system</span></label>
+      <label class="radio-row"><input type="radio" name="ds-theme" value="light"><span>Always light</span></label>
+      <label class="radio-row"><input type="radio" name="ds-theme" value="dark"><span>Always dark</span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Accent colour</legend>
+      <div class="swatch-row">
+        <span class="swatch-preview" id="ds-swatch" aria-hidden="true"></span>
+        <output class="swatch-value" id="ds-hex" for="ds-r ds-g ds-b"></output>
+        <button type="button" class="btn sm" id="ds-reset-colour">Reset</button>
+      </div>
+      <label class="slider-row">
+        <span>Red</span>
+        <input type="range" id="ds-r" min="0" max="255" step="1" aria-describedby="ds-hex">
+        <output id="ds-r-out">0</output>
+      </label>
+      <label class="slider-row">
+        <span>Green</span>
+        <input type="range" id="ds-g" min="0" max="255" step="1" aria-describedby="ds-hex">
+        <output id="ds-g-out">0</output>
+      </label>
+      <label class="slider-row">
+        <span>Blue</span>
+        <input type="range" id="ds-b" min="0" max="255" step="1" aria-describedby="ds-hex">
+        <output id="ds-b-out">0</output>
+      </label>
+      <p class="footnote" id="ds-contrast" role="status"></p>
+    </fieldset>
+
+    <fieldset>
+      <legend>The queue</legend>
+      <label class="slider-row">
+        <span>Refresh</span>
+        <select id="ds-refresh">
+          <option value="0">Only when I ask</option>
+          <option value="30">Every 30 seconds</option>
+          <option value="60">Every minute</option>
+          <option value="300">Every 5 minutes</option>
+        </select>
+      </label>
+      <label class="slider-row">
+        <span>Open on</span>
+        <select id="ds-tab">
+          <option value="queue">Reports</option>
+          <option value="suspended">Suspended</option>
+          <option value="appeals">Appeals</option>
+          <option value="feedback">Feedback</option>
+          <option value="overview">Overview</option>
+        </select>
+      </label>
+      <label class="check-row"><input type="checkbox" id="ds-absolute"><span>Show exact times instead of "2 hours ago"</span></label>
+      <label class="check-row"><input type="checkbox" id="ds-compact"><span>Compact rows</span></label>
+      <label class="check-row">
+        <input type="checkbox" id="ds-blur">
+        <span>Hide reported message text until I click it
+          <span class="footnote">— so an unpleasant message is not the first thing on screen</span>
+        </span>
+      </label>
+    </fieldset>
+
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="ds-restore">Restore defaults</button>
+      <button type="submit" class="btn primary">Done</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="suspend-dialog" aria-labelledby="suspend-title">
   <form id="suspend-form" method="dialog">
