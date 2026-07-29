@@ -683,7 +683,12 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 }
 .topbar-actions { display: flex; align-items: center; gap: 0.25rem; position: relative; }
 .avatar-btn { padding: 0.15rem; border-radius: 50%; border-color: transparent; background: none; }
-#user-menu { inset: auto 0 0 0; }
+/* No `inset` here on purpose. `.menu` already sets the bottom-sheet inset, and
+   an ID-specificity copy of it cannot be undone by the `.menu { inset: auto }`
+   reset at the desktop breakpoint — `bottom: 0` survived into the dropdown,
+   which then stretched between top and bottom inside a 48px-tall parent and
+   collapsed to just its padding. The items still painted; the panel behind them
+   did not. */
 
 /* ---------- Layout ---------- */
 .layout { flex: 1; display: flex; min-height: 0; position: relative; }
@@ -814,7 +819,7 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .convo-subtitle .presence-dot { position: static; border: 0; width: 0.55rem; height: 0.55rem; }
 .convo-actions { display: flex; gap: 0.15rem; position: relative; }
 .convo-actions .icon-btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-#convo-menu { inset: auto 0 0 0; }
+/* Same as #user-menu: no `inset` here, or the desktop reset cannot reach it. */
 
 .convo-search {
   display: flex;
