@@ -92,6 +92,12 @@
         </div>
         <input id="signin-password" name="password" type="password" autocomplete="current-password" required>
         <p class="field-error" id="signin-password-err" role="alert" hidden></p>
+        <!-- Shown only when the refusal was a suspension, so the offer to appeal
+             appears exactly where somebody has just been told they cannot get
+             in — and nowhere else. -->
+        <p class="appeal-row" id="appeal-offer" hidden>
+          <button type="button" class="link-btn" id="btn-appeal">Ask for this to be looked at again</button>
+        </p>
       </div>
       <p class="forgot-row"><button type="button" class="link-btn" data-goto="reset">Forgot your password?</button></p>
       <label class="check-row"><input type="checkbox" id="remember-me" checked><span>Keep me signed in on this device</span></label>
@@ -720,6 +726,34 @@
     <footer class="dialog-footer">
       <button type="button" class="btn" data-close-dialog>Cancel</button>
       <button type="submit" class="btn primary">Update password</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Appeal a suspension -->
+<dialog id="appeal-dialog" class="dialog sm-dialog" aria-labelledby="appeal-dialog-title">
+  <header class="dialog-header">
+    <h2 id="appeal-dialog-title">Ask for another look</h2>
+    <button class="btn icon-btn" data-close-dialog aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </header>
+  <form id="appeal-form" class="dialog-body" method="post" action="/api/auth/no-script" novalidate>
+    <blockquote class="appeal-reason" id="appeal-reason-shown"></blockquote>
+    <p class="hint">
+      This goes to the people who run this server. You can send <strong>one</strong>
+      message about this suspension, so say what you need to say.
+    </p>
+    <div class="field">
+      <label for="appeal-message">Your message</label>
+      <textarea id="appeal-message" rows="5" maxlength="2000" required
+                placeholder="Explain what happened, or what you think has been misunderstood."></textarea>
+      <p class="hint"><output id="appeal-remaining">2000</output> characters left</p>
+    </div>
+    <p class="field-error" id="appeal-error" role="alert" hidden></p>
+    <footer class="dialog-footer">
+      <button type="button" class="btn" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn primary">
+        <svg class="icon sm" aria-hidden="true"><use href="#i-send"/></svg>Send
+      </button>
     </footer>
   </form>
 </dialog>

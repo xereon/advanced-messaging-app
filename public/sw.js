@@ -7,7 +7,7 @@
 //
 // Bump CACHE when the shell changes; old caches are dropped on activate.
 
-const CACHE = 'relay-shell-v4';
+const CACHE = 'relay-shell-v6';
 
 const SHELL = [
   '/',
@@ -45,6 +45,9 @@ self.addEventListener('message', (event) => {
   if (event.data === 'skip-waiting') self.skipWaiting();
 });
 
+/** The files that make up the running app, as opposed to its decoration. */
+const isCode = (pathname) => /\.(js|css|html)$/.test(pathname);
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -76,7 +79,30 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets: serve from cache immediately, refresh in the background.
+  // Code is network first, like navigations.
+  //
+  // Cache-first was serving the previous deploy's script for one load and
+  // refreshing behind it, so a fix could look like it had not shipped — and
+  // worse, a freshly loaded index.html could pair with a stale module. These
+  // files are small and the request is on an already-warm connection, so the
+  // cost is negligible; the cache still answers when there is no network.
+  if (isCode(url.pathname)) {
+    event.respondWith(
+      fetch(request)
+        .then((res) => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(request).then((hit) => hit || Response.error())),
+    );
+    return;
+  }
+
+  // Everything else — icons, the manifest — is cache first with a background
+  // refresh. Being one version behind on an icon costs nothing.
   event.respondWith(
     caches.match(request).then((hit) => {
       const network = fetch(request)
@@ -92,6 +118,7 @@ self.addEventListener('fetch', (event) => {
     }),
   );
 });
+
 
 function offlineResponse() {
   return new Response(

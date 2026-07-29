@@ -53,6 +53,7 @@ export const del = (path, body) => request('DELETE', path, body);
 export const signup = (name, email, password) => post('/auth/signup', { name, email, password });
 export const login = (email, password) => post('/auth/login', { email, password });
 export const guest = () => post('/auth/guest');
+export const appeal = (email, password, message) => post('/auth/appeal', { email, password, message });
 export const requestCode = (email) => post('/auth/code/request', { email });
 export const verifyCode = (email, code) => post('/auth/code/verify', { email, code });
 export const pinLogin = (userId, pin) => post('/auth/pin', { userId, pin });

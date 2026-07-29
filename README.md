@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 318 tests
+npm test     # 335 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -425,6 +425,20 @@ service worker skips it entirely — a report queue has no business in a disk
 cache. Its client builds every node and sets `textContent`, never `innerHTML`,
 because the strings on that screen are written by the person being reported.
 
+**Appeals.** A suspended account is not simply shut out. The sign-in screen
+offers to have the decision looked at again, and one message goes to the
+dashboard's Appeals tab, shown beside the reason they were given.
+
+That endpoint is the only one in the app that checks a password outside sign-in,
+because a suspended person has no session to authenticate with — so it is
+careful not to become anything else. A wrong password and an unknown address
+answer identically to each other and to a failed sign-in, so it cannot be used
+to find out which addresses exist or which are suspended. It is rate limited like
+the login route, it issues no session, and the limit of one appeal per suspension
+is a rule rather than a throttle: the table's primary key is
+`(user_id, suspended_at)`, so the queue cannot be flooded by the account it is
+about. A *new* suspension is a new thing to appeal.
+
 **Suspension** is the enforcement lever, offered on the report card itself so
 reading a report and acting on it are the same screen. Pick 24 hours, 7 days,
 30 days or open-ended, and write a reason.
@@ -530,28 +544,22 @@ Settings are stored on your account, so they follow you between devices.
 
 Worth naming rather than hiding:
 
-- **A service worker can serve stale code for one load.** Assets are cached and
-  refreshed in the background, so the *next* visit gets a deployed change.
-  Anyone looking immediately after a deploy may need a hard reload. Bumping
-  `CACHE` in `public/sw.js` forces it.
 - **Attestation is not validated.** Registration uses `attestation: 'none'`, so
   Relay verifies possession of the key but does not attest which authenticator
   model produced it. This is a deliberate choice, not an omission — it is what
   most services do, and validating attestation only buys something if you intend
   to allow-list specific hardware. That would need certificate-chain parsing per
   attestation format.
-- **No virus scanning ships.** Point `RELAY_SCAN_COMMAND` at a scanner
-  (`clamscan`, for instance) and a non-zero exit rejects the upload; without it,
-  files are stored as sent. They are always served inertly — sniffed type, forced
-  download for anything but a short image allow-list, and a `sandbox` CSP.
+- **No virus scanner ships.** Bundling one would end the no-dependencies
+  promise, so `RELAY_SCAN_COMMAND` is a hook: point it at `clamscan` and a
+  non-zero exit rejects the upload. Relay now *says so on start* when it is
+  unset, rather than leaving a documented setting nobody knows to look for.
+  Uploads are always served inertly regardless — sniffed type, forced download
+  for anything but a short image allow-list, and a `sandbox` CSP.
 - **Messages are stored in plaintext.** Encrypting bodies at rest is
   straightforward and worth doing; true end-to-end encryption is a different
   product — it would break server-side search and needs cross-device key
   management.
-- **No appeal route.** A suspended account is told the reason and the end date,
-  but there is no way to reply to it from inside Relay — they have to reach the
-  operator some other way. A one-message-per-suspension channel to the dashboard
-  is the next thing I would build.
 - **One database.** SQLite with WAL handles a busy small deployment comfortably,
   and the event bus and presence now work across worker processes, but nothing
   here shards or replicates.

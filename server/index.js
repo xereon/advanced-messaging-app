@@ -20,7 +20,9 @@ import * as files from './files.js';
 import * as mailer from './mailer.js';
 import * as push from './push.js';
 import * as admin from './admin.js';
-import { seedBots, seedConversationsFor, cancelBotTimers } from './bots.js';
+import {
+  seedBots, seedConversationsFor, cancelBotTimers, demoBotsEnabled,
+} from './bots.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PUBLIC_DIR = join(ROOT, 'public');
@@ -264,6 +266,34 @@ const NO_SCRIPT_PAGE = `<!DOCTYPE html>
 </div></body></html>`;
 
 /**
+ * Say out loud which protections are not switched on.
+ *
+ * Every one of these is a documented environment variable, which is another way
+ * of saying nobody knows about it. A setting that only exists in a README is a
+ * setting that stays unset, so the log names them once on start where whoever
+ * deployed this is already looking.
+ */
+function reportPostureOnBoot() {
+  const notes = [];
+  if (!process.env.RELAY_SCAN_COMMAND) {
+    notes.push('Uploads are not virus scanned. Set RELAY_SCAN_COMMAND to a scanner'
+      + ' (e.g. clamscan) — a non-zero exit rejects the file.');
+  }
+  if (!process.env.RELAY_SECURE) {
+    notes.push('Session cookies are not marked Secure. Set RELAY_SECURE=1 when TLS'
+      + ' terminates in front of this.');
+  }
+  if (demoBotsEnabled()) {
+    notes.push('Demo accounts are on. Set RELAY_DEMO_BOTS=0 for a real deployment.');
+  }
+  if (!db.handle().prepare('SELECT 1 AS ok FROM users WHERE is_admin = 1').get()) {
+    notes.push('No administrator, so abuse reports cannot be read. Grant one with'
+      + ' npm run admin -- --grant you@example.com');
+  }
+  for (const note of notes) console.warn(`[relay] ${note}`);
+}
+
+/**
  * What a suspended account is told when it tries to sign in.
  *
  * Stated plainly, with the reason and the end date when there is one. A
@@ -374,6 +404,30 @@ async function handleApi(req, res, url) {
     }
     seedConversationsFor(user.id, user.name);
     return send(res, 200, { user: auth.publicUser(user) }, startSession(user, 'password'));
+  }
+
+  /**
+   * Appeal a suspension.
+   *
+   * Sits under /auth/ because it is the only thing an account with no session
+   * can do, and it authenticates the same way signing in would. Rate limited on
+   * the password check like the login route, since it accepts one.
+   */
+  if (path === '/auth/appeal' && method === 'POST') {
+    const email = auth.normalizeEmail(body.email);
+    if (!auth.rateLimit(`appeal:${clientIp(req)}`, { limit: 10, windowMs: 60 * 60 * 1000 })
+      || !auth.rateLimit(`appeal:user:${email}`, { limit: 5, windowMs: 60 * 60 * 1000 })) {
+      return fail(res, 429, 'Too many attempts. Wait a while and try again.');
+    }
+    const user = auth.findByEmail(email);
+    const ok = user && await auth.verifySecret(body.password, user.pw_salt, user.pw_hash);
+    if (!ok) {
+      // Same work and the same message as a failed sign-in, so this cannot be
+      // used to test passwords more cheaply than the login route can.
+      if (!user) await auth.makeSecret(String(body.password || ''));
+      return fail(res, 401, 'Email or password is incorrect.');
+    }
+    return send(res, 201, api.submitAppeal({ user, message: body.message }));
   }
 
   if (path === '/auth/guest' && method === 'POST') {
@@ -697,6 +751,14 @@ async function handleApi(req, res, url) {
         ip: clientIp(req),
       }));
     }
+    if (path === '/admin/appeals' && method === 'GET') {
+      return send(res, 200, admin.listAppeals(me, { status: url.searchParams.get('status') || 'new' }));
+    }
+    if ((m = path.match(/^\/admin\/appeals\/([^/]+)\/(\d+)$/)) && method === 'PATCH') {
+      return send(res, 200, admin.resolveAppeal(
+        me, decodeURIComponent(m[1]), m[2], body.status, { ip: clientIp(req) },
+      ));
+    }
     if (path === '/admin/suspended' && method === 'GET') {
       return send(res, 200, admin.listSuspended(me));
     }
@@ -815,6 +877,7 @@ export async function start({ port = PORT, dbFile = DB_FILE, uploadDir = UPLOAD_
     const where = typeof port === 'number' ? `http://localhost:${port}` : port;
     console.log(`Relay server listening on ${where}`);
     console.log(`Database: ${dbFile}`);
+    reportPostureOnBoot();
   });
 
   const shutdown = () => {

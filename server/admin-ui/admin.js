@@ -370,6 +370,111 @@ async function loadSuspended() {
   }
 }
 
+/* ---------- appeals ---------- */
+
+const APPEAL_NEXT = [
+  { to: 'read', label: 'Mark read' },
+  { to: 'granted', label: 'Granted', primary: true },
+  { to: 'refused', label: 'Refused' },
+];
+
+async function loadAppeals() {
+  const list = $('#appeals-list');
+  const { appeals } = await call('GET', '/admin/appeals?status=new');
+  list.replaceChildren();
+
+  if (!appeals.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'No appeals waiting.';
+    list.append(empty);
+    return;
+  }
+
+  for (const appeal of appeals) {
+    const card = document.createElement('article');
+    card.className = 'report';
+
+    const head = document.createElement('div');
+    head.className = 'report-head';
+    const who = document.createElement('div');
+    who.className = 'report-who';
+    const name = document.createElement('strong');
+    name.textContent = appeal.name;
+    who.append(name);
+    if (appeal.username) {
+      const handle = document.createElement('span');
+      handle.className = 'handle';
+      handle.textContent = ` @${appeal.username}`;
+      who.append(handle);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'report-meta';
+    meta.textContent = `${appeal.email || 'no email'} · appealed ${fmtAgo(appeal.createdAt)}`;
+    who.append(meta);
+
+    const tags = document.createElement('div');
+    // An appeal against a suspension that has since lapsed or been lifted is
+    // still worth reading, but acting on it would be acting on nothing.
+    tags.append(appeal.stillSuspended
+      ? tag('still suspended', 'status-open')
+      : tag('no longer suspended', 'status-dismissed'));
+    head.append(who, tags);
+    card.append(head);
+
+    if (appeal.suspensionReason) {
+      const quote = document.createElement('blockquote');
+      quote.className = 'report-quote';
+      const label = document.createElement('span');
+      label.className = 'quote-label';
+      label.textContent = 'The reason they were given';
+      const text = document.createElement('span');
+      text.textContent = appeal.suspensionReason;
+      quote.append(label, text);
+      card.append(quote);
+    }
+
+    const body = document.createElement('p');
+    body.className = 'report-note';
+    body.style.whiteSpace = 'pre-wrap';
+    body.textContent = appeal.message;
+    card.append(body);
+
+    const facts = document.createElement('dl');
+    facts.className = 'report-facts';
+    facts.append(fact('Suspended', fmtWhen(appeal.suspendedAt)));
+    if (appeal.suspendedUntil) facts.append(fact('Until', fmtWhen(appeal.suspendedUntil)));
+    card.append(facts);
+
+    const row = document.createElement('div');
+    row.className = 'report-actions';
+    for (const option of APPEAL_NEXT) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `btn sm${option.primary ? ' primary' : ''}`;
+      btn.textContent = option.label;
+      btn.addEventListener('click', async () => {
+        for (const b of row.querySelectorAll('button')) b.disabled = true;
+        try {
+          await call(
+            'PATCH',
+            `/admin/appeals/${encodeURIComponent(appeal.userId)}/${appeal.suspendedAt}`,
+            { status: option.to },
+          );
+          toast(`Appeal marked ${option.to}.`, 'ok');
+          await Promise.all([loadAppeals(), loadCounts()]);
+        } catch (err) {
+          toast(err.message, 'error');
+          for (const b of row.querySelectorAll('button')) b.disabled = false;
+        }
+      });
+      row.append(btn);
+    }
+    card.append(row);
+    list.append(card);
+  }
+}
+
 /* ---------- feedback ---------- */
 
 let fbStatus = 'new';
@@ -564,11 +669,12 @@ async function loadOverview() {
 /** The tab badges. One request feeds both. */
 async function loadCounts() {
   try {
-    const { reports, feedback, accounts } = await call('GET', '/admin/overview');
+    const { reports, feedback, accounts, appeals } = await call('GET', '/admin/overview');
     for (const [sel, n] of [
       ['#open-count', reports.open],
       ['#feedback-count', feedback.unread],
       ['#suspended-count', accounts.suspended],
+      ['#appeals-count', appeals.waiting],
     ]) {
       const pill = $(sel);
       pill.textContent = fmtNum(n);
@@ -624,8 +730,8 @@ async function loadAudit() {
 /* ---------- tabs ---------- */
 
 const LOADERS = {
-  queue: loadReports, suspended: loadSuspended, feedback: loadFeedback,
-  overview: loadOverview, audit: loadAudit,
+  queue: loadReports, suspended: loadSuspended, appeals: loadAppeals,
+  feedback: loadFeedback, overview: loadOverview, audit: loadAudit,
 };
 let tab = 'queue';
 

@@ -58,6 +58,10 @@
     <svg class="icon sm" aria-hidden="true"><use href="#i-ban"/></svg>Suspended
     <span class="pill" id="suspended-count" hidden></span>
   </button>
+  <button type="button" class="tab" data-tab="appeals">
+    <svg class="icon sm" aria-hidden="true"><use href="#i-back"/></svg>Appeals
+    <span class="pill" id="appeals-count" hidden></span>
+  </button>
   <button type="button" class="tab" data-tab="overview">
     <svg class="icon sm" aria-hidden="true"><use href="#i-shield"/></svg>Overview
   </button>
@@ -100,6 +104,16 @@
       lapse on their own.
     </p>
     <div id="suspended-list" class="report-list" aria-live="polite"></div>
+  </section>
+
+  <!-- Appeals -->
+  <section class="panel" data-panel="appeals" hidden aria-label="Appeals">
+    <p class="footnote">
+      A suspended account can send one message about its suspension, from the
+      sign-in screen. Granting an appeal is not automatic — lift the suspension
+      on the Suspended tab if you agree with it.
+    </p>
+    <div id="appeals-list" class="report-list" aria-live="polite"></div>
   </section>
 
   <!-- Overview -->

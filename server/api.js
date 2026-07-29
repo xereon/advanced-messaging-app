@@ -2,7 +2,8 @@
 // caller is a member of it first; nothing trusts an id from the client.
 
 import {
-  handle, tx, nextSeq, currentSeq, publicUser, selfUser, shapeMessage, shapeConvo, isSuspended,
+  handle, tx, nextSeq, currentSeq, publicUser, selfUser, shapeMessage, shapeConvo,
+  isSuspended, suspensionOf,
 } from './db.js';
 import * as auth from './auth.js';
 import * as rt from './realtime.js';
@@ -435,6 +436,48 @@ export function submitReport(me, { subjectId, convoId, messageId, reason, note }
 
 // Reading and resolving reports lives in admin.js, which answers 404 rather
 // than 403 so the moderation surface does not confirm its own existence.
+
+/* ---------- appealing a suspension ---------- */
+
+const MAX_APPEAL = 2000;
+
+/**
+ * The one thing a suspended account can do.
+ *
+ * It has to work without a session, because a suspension is precisely the state
+ * of having none — so the password stands in for one. That is the whole reason
+ * this is not simply the feedback endpoint: the caller is unauthenticated, and
+ * without proving the account is theirs, anyone could send an appeal in
+ * somebody else's name.
+ *
+ * Exactly one appeal per suspension. Not a rate limit — a rule: the table's
+ * primary key is (user_id, suspended_at), so a second attempt is refused
+ * rather than throttled. A suspended person gets one considered message, and
+ * the queue cannot be flooded by the account it is about.
+ */
+export function submitAppeal({ user, message }) {
+  const held = suspensionOf(user);
+  // Only a suspended account has anything to appeal. Answering the same way for
+  // "not suspended" and "wrong password" keeps this from being a way to test
+  // whether an address is suspended.
+  if (!held) throw new HttpError(403, 'That account is not suspended.');
+
+  const text = String(message ?? '').trim().slice(0, MAX_APPEAL);
+  if (!text) bad('Write a short note about why this should be looked at again.');
+
+  const existing = handle().prepare(
+    'SELECT 1 AS ok FROM appeals WHERE user_id = ? AND suspended_at = ?',
+  ).get(user.id, held.at);
+  if (existing) {
+    throw new HttpError(409, 'You have already appealed this suspension. It is waiting to be read.');
+  }
+
+  handle().prepare(
+    `INSERT INTO appeals (user_id, suspended_at, message, status, created_at)
+     VALUES (?,?,?,'new',?)`,
+  ).run(user.id, held.at, text, Date.now());
+  return { ok: true };
+}
 
 /* ---------- feedback ---------- */
 

@@ -110,6 +110,10 @@ export function overview(me) {
       dismissed: one("SELECT COUNT(*) AS n FROM reports WHERE status = 'dismissed'"),
       lastDay: one('SELECT COUNT(*) AS n FROM reports WHERE created_at > ?', dayAgo),
     },
+    appeals: {
+      waiting: one("SELECT COUNT(*) AS n FROM appeals WHERE status = 'new'"),
+      total: one('SELECT COUNT(*) AS n FROM appeals'),
+    },
     feedback: {
       unread: one("SELECT COUNT(*) AS n FROM feedback WHERE status = 'new'"),
       total: one('SELECT COUNT(*) AS n FROM feedback'),
@@ -340,6 +344,70 @@ export function listSuspended(me) {
       by: r.suspended_by_name || null,
     })),
   };
+}
+
+/**
+ * Appeals against a suspension.
+ *
+ * Read next to the suspension they argue with, because that is the only context
+ * in which one means anything. The account is named from the live row rather
+ * than a snapshot: an appeal is only actionable while the account exists.
+ */
+export function listAppeals(me, { status = 'new' } = {}) {
+  requireAdmin(me);
+  if (status !== 'all' && !['new', 'read', 'granted', 'refused'].includes(status)) {
+    const err = new Error('Unknown status.');
+    err.status = 400;
+    throw err;
+  }
+  const where = status === 'all' ? '' : 'WHERE a.status = ?';
+  const args = status === 'all' ? [] : [status];
+
+  const rows = handle().prepare(`
+    SELECT a.*, u.name, u.username, u.email,
+           u.suspended_at AS current_suspended_at, u.suspended_until, u.suspended_reason
+      FROM appeals a JOIN users u ON u.id = a.user_id
+     ${where}
+     ORDER BY a.created_at DESC LIMIT 200`).all(...args);
+
+  return {
+    appeals: rows.map((r) => ({
+      userId: r.user_id,
+      name: r.name,
+      username: r.username,
+      email: r.email,
+      message: r.message,
+      status: r.status,
+      createdAt: r.created_at,
+      // An appeal against a suspension that has since been lifted or replaced is
+      // still worth reading, but the reader should know it is no longer live.
+      stillSuspended: r.current_suspended_at === r.suspended_at
+        && !!suspensionOf({ suspended_at: r.current_suspended_at, suspended_until: r.suspended_until }),
+      suspensionReason: r.suspended_reason,
+      suspendedUntil: r.suspended_until,
+      suspendedAt: r.suspended_at,
+    })),
+  };
+}
+
+export function resolveAppeal(me, userId, suspendedAt, status, { ip = null } = {}) {
+  const actor = requireAdmin(me);
+  if (!['new', 'read', 'granted', 'refused'].includes(status)) {
+    const err = new Error('Unknown status.');
+    err.status = 400;
+    throw err;
+  }
+  const at = Number(suspendedAt);
+  const row = handle().prepare('SELECT * FROM appeals WHERE user_id = ? AND suspended_at = ?')
+    .get(userId, at);
+  if (!row) throw new NotFound();
+
+  logAction({ id: me.id, name: actor.name }, 'appeal.resolve', {
+    targetType: 'user', targetId: userId, detail: `${row.status} → ${status}`, ip,
+  });
+  handle().prepare('UPDATE appeals SET status = ? WHERE user_id = ? AND suspended_at = ?')
+    .run(status, userId, at);
+  return { ok: true, status };
 }
 
 /* ---------- feedback ---------- */

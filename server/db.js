@@ -260,6 +260,19 @@ export function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at DESC);
 
+    -- One appeal per suspension. A suspended account cannot sign in, so this is
+    -- the only thing it can write, and the PRIMARY KEY on (user_id,
+    -- suspended_at) is what makes it *one*: a second attempt against the same
+    -- suspension replaces nothing and inserts nothing.
+    CREATE TABLE IF NOT EXISTS appeals (
+      user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      suspended_at  INTEGER NOT NULL,
+      message       TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'new',
+      created_at    INTEGER NOT NULL,
+      PRIMARY KEY (user_id, suspended_at)
+    );
+
     -- Everything an administrator does, and every time one opens the dashboard.
     -- Append-only by convention: nothing in the app updates or deletes a row
     -- here, because a moderation record you can quietly revise is not a record.

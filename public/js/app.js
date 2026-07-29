@@ -82,6 +82,7 @@ $('#signin-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   fieldError('#signin-email-err');
   fieldError('#signin-password-err');
+  $('#appeal-offer').hidden = true;
   const form = e.currentTarget;
   busy(form, true);
   try {
@@ -89,10 +90,67 @@ $('#signin-form').addEventListener('submit', async (e) => {
     await enterApp(user);
   } catch (err) {
     fieldError('#signin-password-err', err.message);
+    // Offer the appeal only when the refusal was a suspension. Any other
+    // failure — wrong password, no account — must not hint that appealing is a
+    // thing, or it becomes a way to probe for suspended addresses.
+    if (err.status === 403 && /suspended/i.test(err.message)) {
+      $('#appeal-offer').hidden = false;
+      suspensionNotice = err.message;
+    }
   } finally {
     busy(form, false);
   }
 });
+
+/* ---------- appealing a suspension ---------- */
+
+// What the server said, repeated in the dialog so the reason is in front of
+// whoever is writing about it.
+let suspensionNotice = '';
+const APPEAL_MAX = 2000;
+
+$('#btn-appeal').addEventListener('click', () => {
+  $('#appeal-reason-shown').textContent = suspensionNotice;
+  $('#appeal-message').value = '';
+  $('#appeal-remaining').textContent = String(APPEAL_MAX);
+  fieldError('#appeal-error');
+  $('#appeal-dialog').showModal();
+  $('#appeal-message').focus();
+});
+
+$('#appeal-message').addEventListener('input', (e) => {
+  $('#appeal-remaining').textContent = String(Math.max(APPEAL_MAX - e.target.value.length, 0));
+});
+
+$('#appeal-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const message = $('#appeal-message').value.trim();
+  if (!message) return fieldError('#appeal-error', 'Write a short note first.');
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    // The password is re-read from the sign-in form rather than held anywhere:
+    // the appeal has no session, so it authenticates the same way signing in
+    // does, and this is the one place that value already lives.
+    await api.appeal(
+      $('#signin-email').value.trim(),
+      $('#signin-password').value,
+      message,
+    );
+    $('#appeal-dialog').close();
+    $('#appeal-offer').hidden = true;
+    fieldError('#signin-password-err',
+      'Your message has been sent to the people who run this server.');
+  } catch (err) {
+    fieldError('#appeal-error', err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+for (const btn of $$('[data-close-dialog]')) {
+  btn.addEventListener('click', () => btn.closest('dialog')?.close());
+}
 
 /* ---------- sign up ---------- */
 
