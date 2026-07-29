@@ -300,6 +300,16 @@ export function migrate() {
     updated_at: 'INTEGER',
   });
 
+  // Suspension. `suspended_until` NULL alongside a non-null `suspended_at`
+  // means indefinite; a timestamp means it lapses on its own, which is what
+  // makes a cooling-off period possible without anyone remembering to undo it.
+  addColumns('users', {
+    suspended_at: 'INTEGER',
+    suspended_until: 'INTEGER',
+    suspended_reason: 'TEXT',
+    suspended_by: 'TEXT',
+  });
+
   // SQLite cannot add a UNIQUE column, so the constraint is a separate index.
   // NULLs do not collide in a SQLite unique index, which is what lets the
   // column exist for a moment before the backfill fills it in.
@@ -419,6 +429,27 @@ export function publicUser(row) {
     statusUntil: statusLive ? (row.status_until || null) : null,
   };
 }
+
+/**
+ * Whether this account is suspended right now.
+ *
+ * A temporary suspension is not swept by a job — it is simply not in force once
+ * its end time has passed, the same way an expired status is not reported. That
+ * means the state is always computed from the row rather than depending on a
+ * timer having run, so a server that was switched off over the weekend does not
+ * hold somebody out longer than they were told.
+ */
+export function suspensionOf(row) {
+  if (!row?.suspended_at) return null;
+  if (row.suspended_until && row.suspended_until <= Date.now()) return null;
+  return {
+    at: row.suspended_at,
+    until: row.suspended_until || null,
+    reason: row.suspended_reason || null,
+  };
+}
+
+export const isSuspended = (row) => !!suspensionOf(row);
 
 /**
  * What an account is told about itself.

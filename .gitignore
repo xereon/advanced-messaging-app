@@ -3,6 +3,11 @@ Thumbs.db
 node_modules/
 *.log
 
+# npm writes this the first time any npm command runs. The project has no
+# dependencies, so it locks nothing and only invites someone to believe there is
+# an install step.
+package-lock.json
+
 # SQLite database and its write-ahead log
 data/
 *.db

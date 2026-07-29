@@ -34,6 +34,16 @@ function busy(form, on) {
 }
 
 async function enterApp(user) {
+  // If the session ends underneath us — expired, password changed on another
+  // device, or the account suspended — reload once to the sign-in screen.
+  // Trying to sign in there is what surfaces the reason.
+  let bouncing = false;
+  api.setUnauthorizedHandler(() => {
+    if (bouncing) return;
+    bouncing = true;
+    location.reload();
+  });
+
   // A guest session must not overwrite the remembered real account.
   db.rememberDevice(user.isGuest
     ? {}

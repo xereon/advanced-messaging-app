@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 294 tests
+npm test     # 318 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -425,9 +425,38 @@ service worker skips it entirely — a report queue has no business in a disk
 cache. Its client builds every node and sets `textContent`, never `innerHTML`,
 because the strings on that screen are written by the person being reported.
 
-The dashboard reads counts, reports and feedback; it has no enforcement lever
-yet, so "actioned" records a decision you carried out elsewhere (a block, a word
-with the person, an account deletion). Suspension is the obvious next addition.
+**Suspension** is the enforcement lever, offered on the report card itself so
+reading a report and acting on it are the same screen. Pick 24 hours, 7 days,
+30 days or open-ended, and write a reason.
+
+A suspended account has no way in. Every device is signed out immediately — the
+session rows are deleted, not merely rejected — and password, one-time email
+code, quick-unlock PIN and passkey are all refused, because the check sits in the
+one place every sign-in method passes through rather than in each of them. The
+live event stream is refused too, and a suspension written straight into the
+database by hand is honoured just the same.
+
+**Unlike a block, it is told to the person.** A block is undetectable on purpose,
+because it is one user's private choice about another; being locked out of your
+own account by the operator is something you are owed an explanation for, and a
+vague failure only produces a support request that has to give the same answer.
+So the sign-in screen states it plainly, with the reason and the end date.
+
+Nothing is deleted. What they already said stays in other people's conversations
+— suspension stops someone participating, it does not rewrite history — and their
+credentials are untouched, ready for the suspension to lift. They do drop out of
+people search, and opening a new conversation with them is refused, since a
+thread with someone who cannot answer is a dead end.
+
+A timed suspension **lapses on its own**. There is no sweeper: the state is
+computed from the row, so a server that was switched off over the weekend does
+not hold somebody out for longer than they were told.
+
+Administrators cannot suspend themselves — that would lock them out of the tool
+that undoes it — and cannot suspend each other. Removing another
+administrator's access is a shell operation (`npm run admin -- --revoke`), which
+keeps this from being a way for one administrator to shut the others out.
+Suspending and lifting are both audited with the reason and the length.
 
 **Feedback.** *Send feedback* in the account menu opens a short form — what kind
 (an idea, something broken, hard to use, praise, something else) and what
@@ -519,10 +548,10 @@ Worth naming rather than hiding:
   straightforward and worth doing; true end-to-end encryption is a different
   product — it would break server-side search and needs cross-device key
   management.
-- **Moderation has no web screen.** Blocking and reporting both work — see
-  below — but reports are read and resolved from the command line
-  (`npm run reports`), not from an admin page. That is the next thing I would
-  build.
+- **No appeal route.** A suspended account is told the reason and the end date,
+  but there is no way to reply to it from inside Relay — they have to reach the
+  operator some other way. A one-message-per-suspension channel to the dashboard
+  is the next thing I would build.
 - **One database.** SQLite with WAL handles a busy small deployment comfortably,
   and the event bus and presence now work across worker processes, but nothing
   here shards or replicates.

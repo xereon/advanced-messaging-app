@@ -5,6 +5,20 @@ export class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
+/**
+ * Called when the server stops recognising the session mid-use.
+ *
+ * A session can end underneath a running tab — it expired, the password was
+ * changed elsewhere, or the account was suspended. Without this, every
+ * subsequent action fails with its own error toast and the app looks broken
+ * rather than signed out.
+ */
+let onUnauthorized = null;
+export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
+
+// A 401 from these is the answer, not a lost session: they are how you sign in.
+const AUTH_PATHS = /^\/auth\//;
+
 async function request(method, path, body) {
   const init = {
     method,
@@ -23,6 +37,7 @@ async function request(method, path, body) {
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
+  if (res.status === 401 && !AUTH_PATHS.test(path)) onUnauthorized?.();
   if (!res.ok) throw new ApiError(res.status, data.error || `Request failed (${res.status}).`);
   return data;
 }

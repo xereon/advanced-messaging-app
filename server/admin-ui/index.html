@@ -18,6 +18,7 @@
     <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></symbol>
     <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 0 0 1 1h2l4 4V7L6 11H4a1 1 0 0 0-1 0z"/><path d="M14 8.5a4 4 0 0 1 0 7"/><path d="M17.5 6a7 7 0 0 1 0 12"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+    <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
   </defs>
@@ -53,6 +54,10 @@
     <svg class="icon sm" aria-hidden="true"><use href="#i-megaphone"/></svg>Feedback
     <span class="pill" id="feedback-count" hidden></span>
   </button>
+  <button type="button" class="tab" data-tab="suspended">
+    <svg class="icon sm" aria-hidden="true"><use href="#i-ban"/></svg>Suspended
+    <span class="pill" id="suspended-count" hidden></span>
+  </button>
   <button type="button" class="tab" data-tab="overview">
     <svg class="icon sm" aria-hidden="true"><use href="#i-shield"/></svg>Overview
   </button>
@@ -87,6 +92,16 @@
     <div id="feedback-list" class="report-list" aria-live="polite"></div>
   </section>
 
+  <!-- Suspended accounts -->
+  <section class="panel" data-panel="suspended" hidden aria-label="Suspended accounts">
+    <p class="footnote">
+      A suspended account cannot sign in, is signed out of every device, and does
+      not appear in search. Nothing they have said is deleted. Timed suspensions
+      lapse on their own.
+    </p>
+    <div id="suspended-list" class="report-list" aria-live="polite"></div>
+  </section>
+
   <!-- Overview -->
   <section class="panel" data-panel="overview" hidden aria-label="Instance overview">
     <div id="overview-grid" class="stat-groups"></div>
@@ -113,6 +128,37 @@
     </div>
   </section>
 </main>
+
+<dialog id="suspend-dialog" aria-labelledby="suspend-title">
+  <form id="suspend-form" method="dialog">
+    <h2 id="suspend-title">Suspend account</h2>
+    <p class="dialog-lead" id="suspend-who"></p>
+    <p class="footnote">
+      They are signed out everywhere and told the reason and the end date when
+      they next try to sign in. Their messages stay where they are.
+    </p>
+
+    <fieldset>
+      <legend>For how long?</legend>
+      <label class="radio-row"><input type="radio" name="suspend-days" value="1"><span>24 hours</span></label>
+      <label class="radio-row"><input type="radio" name="suspend-days" value="7" checked><span>7 days</span></label>
+      <label class="radio-row"><input type="radio" name="suspend-days" value="30"><span>30 days</span></label>
+      <label class="radio-row"><input type="radio" name="suspend-days" value=""><span>Until someone lifts it</span></label>
+    </fieldset>
+
+    <div class="field">
+      <label for="suspend-reason">Reason <span class="footnote">— shown to them, so write it for them to read</span></label>
+      <textarea id="suspend-reason" rows="3" maxlength="500"
+                placeholder="Repeated unsolicited advertising after a warning."></textarea>
+    </div>
+
+    <p class="form-error" id="suspend-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="suspend-cancel">Cancel</button>
+      <button type="submit" class="btn danger" id="suspend-confirm">Suspend</button>
+    </div>
+  </form>
+</dialog>
 
 <div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
 

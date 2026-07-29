@@ -9,7 +9,7 @@ import {
   randomBytes, scrypt as scryptCb, timingSafeEqual, createHash, randomUUID,
 } from 'node:crypto';
 import { promisify } from 'node:util';
-import { handle, tx, publicUser, allocateUsername } from './db.js';
+import { handle, tx, publicUser, allocateUsername, isSuspended, suspensionOf } from './db.js';
 import { slugifyUsername } from './username.js';
 
 const scrypt = promisify(scryptCb);
@@ -70,7 +70,17 @@ export function sessionUser(token) {
     return null;
   }
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
-  return user ? { user, method: row.method } : null;
+  if (!user) return null;
+
+  // A suspension takes effect here, which is every authenticated request in the
+  // app. Suspending already deletes the account's sessions, so this is the
+  // second line: it also covers a session created in the same moment, and a
+  // suspension applied directly in the database.
+  if (isSuspended(user)) {
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+    return null;
+  }
+  return { user, method: row.method };
 }
 
 export function destroySession(token) {

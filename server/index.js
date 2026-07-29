@@ -263,6 +263,24 @@ const NO_SCRIPT_PAGE = `<!DOCTYPE html>
      <a href="/">return to Relay</a>.</p>
 </div></body></html>`;
 
+/**
+ * What a suspended account is told when it tries to sign in.
+ *
+ * Stated plainly, with the reason and the end date when there is one. A
+ * suspension is the operator acting against an account, not one user's private
+ * choice about another — the person locked out of their own messages is owed an
+ * explanation, and a vague failure only produces a support request that has to
+ * give the same answer anyway.
+ */
+function suspensionMessage(held) {
+  const parts = ['This account is suspended.'];
+  if (held.reason) parts.push(`Reason: ${held.reason}`);
+  parts.push(held.until
+    ? `Access returns on ${new Date(held.until).toUTCString()}.`
+    : 'Contact the people who run this server if you think this is a mistake.');
+  return parts.join(' ');
+}
+
 /* ---------- routing ---------- */
 
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -308,7 +326,16 @@ async function handleApi(req, res, url) {
   const need = () => { if (!me) throw new api.HttpError(401, 'Sign in first.'); return me; };
   let m;
 
+  /**
+   * Issue a session — the single point every sign-in method passes through.
+   *
+   * The suspension check lives here rather than in each of password, one-time
+   * code, PIN and passkey, so a new sign-in route cannot forget it. Throwing
+   * lets the router turn it into a response with the reason intact.
+   */
   const startSession = (user, method_, ttlMs) => {
+    const held = db.suspensionOf(user);
+    if (held) throw new api.HttpError(403, suspensionMessage(held));
     const { token, expiresAt } = auth.createSession(user.id, method_, ttlMs ? { ttlMs } : {});
     return { 'Set-Cookie': auth.cookieHeader(token, expiresAt, SECURE_COOKIES) };
   };
@@ -669,6 +696,17 @@ async function handleApi(req, res, url) {
       return send(res, 200, admin.resolveFeedback(me, decodeURIComponent(m[1]), body.status, {
         ip: clientIp(req),
       }));
+    }
+    if (path === '/admin/suspended' && method === 'GET') {
+      return send(res, 200, admin.listSuspended(me));
+    }
+    if ((m = path.match(/^\/admin\/users\/([^/]+)\/suspension$/)) && method === 'POST') {
+      return send(res, 200, admin.suspendUser(me, decodeURIComponent(m[1]), {
+        days: body.days, reason: body.reason, ip: clientIp(req),
+      }));
+    }
+    if ((m = path.match(/^\/admin\/users\/([^/]+)\/suspension$/)) && method === 'DELETE') {
+      return send(res, 200, admin.unsuspendUser(me, decodeURIComponent(m[1]), { ip: clientIp(req) }));
     }
     if (path === '/admin/audit' && method === 'GET') {
       return send(res, 200, admin.listAudit(me, url.searchParams.get('limit')));

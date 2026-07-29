@@ -1,7 +1,9 @@
 // api.js — REST handlers. Every route that touches a conversation proves the
 // caller is a member of it first; nothing trusts an id from the client.
 
-import { handle, tx, nextSeq, currentSeq, publicUser, selfUser, shapeMessage, shapeConvo } from './db.js';
+import {
+  handle, tx, nextSeq, currentSeq, publicUser, selfUser, shapeMessage, shapeConvo, isSuspended,
+} from './db.js';
 import * as auth from './auth.js';
 import * as rt from './realtime.js';
 import { scheduleBotReply, demoBotsEnabled } from './bots.js';
@@ -251,13 +253,16 @@ export function searchUsers(me, q) {
   const rows = db.prepare(`
     SELECT * FROM users
      WHERE id != ? AND retired = 0
+       -- A suspended account cannot answer, so offering it as someone to
+       -- message would only produce a conversation that goes nowhere.
+       AND (suspended_at IS NULL OR (suspended_until IS NOT NULL AND suspended_until <= ?))
        AND (is_bot = 0 OR ? = 1)
        AND (LOWER(IFNULL(username,'')) LIKE ? ESCAPE '\\'
          OR LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(name) LIKE ? ESCAPE '\\'
          OR LOWER(IFNULL(role,'')) LIKE ? ESCAPE '\\' OR LOWER(IFNULL(role,'')) LIKE ? ESCAPE '\\'
          OR LOWER(IFNULL(email,'')) = ?)
      ORDER BY name LIMIT 50`)
-    .all(me.id, demoBotsEnabled() ? 1 : 0, prefix, prefix, wordPrefix, prefix, wordPrefix, term);
+    .all(me.id, Date.now(), demoBotsEnabled() ? 1 : 0, prefix, prefix, wordPrefix, prefix, wordPrefix, term);
 
   const known = new Set(db.prepare(`
     SELECT m2.user_id AS id FROM members m1
@@ -287,7 +292,13 @@ export function createConversation(me, { type, title, members }) {
   const ids = [...new Set([me.id, ...(Array.isArray(members) ? members : [])])];
   if (ids.length < 2) bad('A conversation needs at least one other person.');
   for (const id of ids) {
-    if (!auth.findById(id)) bad('Unknown participant.');
+    const person = auth.findById(id);
+    if (!person) bad('Unknown participant.');
+    // Starting a thread with somebody who cannot read it is a dead end, so say
+    // so now rather than after the first message sits unanswered.
+    if (id !== me.id && isSuspended(person)) {
+      throw new HttpError(403, `${person.name}'s account is suspended.`);
+    }
   }
 
   const announce = (convo) => {

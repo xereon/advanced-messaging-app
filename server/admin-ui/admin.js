@@ -201,6 +201,24 @@ const NEXT_STATUS = [
 function actionsFor(report) {
   const row = document.createElement('div');
   row.className = 'report-actions';
+
+  // The point of reading a report is being able to do something about it, so the
+  // lever sits on the card rather than on another screen.
+  if (report.subject?.id && !report.subject.suspended) {
+    const suspend = document.createElement('button');
+    suspend.type = 'button';
+    suspend.className = 'btn sm danger';
+    suspend.textContent = 'Suspend…';
+    suspend.addEventListener('click', () => openSuspend(report.subject));
+    row.append(suspend);
+  } else if (report.subject?.suspended) {
+    const already = document.createElement('span');
+    already.className = 'tag status-actioned';
+    already.style.alignSelf = 'center';
+    already.textContent = 'suspended';
+    row.append(already);
+  }
+
   for (const option of NEXT_STATUS) {
     if (option.to === report.status) continue;
     const btn = document.createElement('button');
@@ -221,6 +239,135 @@ function actionsFor(report) {
     row.append(btn);
   }
   return row;
+}
+
+/* ---------- suspension ---------- */
+
+let suspendTarget = null;
+
+/**
+ * Ask before suspending, with the duration and the reason in one place.
+ *
+ * The reason is not optional in spirit — it is what the person reads when they
+ * cannot get in — so the field says who it is written for.
+ */
+function openSuspend(user) {
+  suspendTarget = user;
+  $('#suspend-who').textContent = `${user.name}${user.username ? ` (@${user.username})` : ''}`;
+  $('#suspend-reason').value = '';
+  const week = $('#suspend-form input[value="7"]');
+  if (week) week.checked = true;
+  const err = $('#suspend-error');
+  err.hidden = true;
+  err.textContent = '';
+  $('#suspend-dialog').showModal();
+  $('#suspend-reason').focus();
+}
+
+function wireSuspend() {
+  $('#suspend-cancel').addEventListener('click', () => $('#suspend-dialog').close());
+
+  $('#suspend-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!suspendTarget) return;
+    const btn = $('#suspend-confirm');
+    const err = $('#suspend-error');
+    const days = $('#suspend-form input[name="suspend-days"]:checked')?.value ?? '';
+    btn.disabled = true;
+    try {
+      await call('POST', `/admin/users/${encodeURIComponent(suspendTarget.id)}/suspension`, {
+        days: days === '' ? null : Number(days),
+        reason: $('#suspend-reason').value.trim(),
+      });
+      $('#suspend-dialog').close();
+      toast(`${suspendTarget.name} is suspended.`, 'ok');
+      await Promise.all([refresh(), loadCounts()]);
+    } catch (error) {
+      err.textContent = error.message;
+      err.hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+async function unsuspend(user) {
+  await call('DELETE', `/admin/users/${encodeURIComponent(user.id)}/suspension`);
+  toast(`${user.name} can sign in again.`, 'ok');
+  await Promise.all([refresh(), loadCounts()]);
+}
+
+async function loadSuspended() {
+  const list = $('#suspended-list');
+  const { suspended } = await call('GET', '/admin/suspended');
+  list.replaceChildren();
+
+  if (!suspended.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'Nobody is suspended.';
+    list.append(empty);
+    return;
+  }
+
+  for (const person of suspended) {
+    const card = document.createElement('article');
+    card.className = 'report';
+
+    const head = document.createElement('div');
+    head.className = 'report-head';
+    const who = document.createElement('div');
+    who.className = 'report-who';
+    const name = document.createElement('strong');
+    name.textContent = person.name;
+    who.append(name);
+    if (person.username) {
+      const handle = document.createElement('span');
+      handle.className = 'handle';
+      handle.textContent = ` @${person.username}`;
+      who.append(handle);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'report-meta';
+    meta.textContent = `${person.email || 'guest'} · suspended ${fmtAgo(person.at)}`;
+    who.append(meta);
+
+    const tags = document.createElement('div');
+    const until = document.createElement('span');
+    until.className = 'tag status-open';
+    until.textContent = person.until ? `until ${fmtWhen(person.until)}` : 'no end date';
+    tags.append(until);
+    head.append(who, tags);
+    card.append(head);
+
+    if (person.reason) {
+      const reason = document.createElement('p');
+      reason.className = 'report-note';
+      reason.textContent = person.reason;
+      card.append(reason);
+    }
+
+    const facts = document.createElement('dl');
+    facts.className = 'report-facts';
+    facts.append(fact('Suspended', fmtWhen(person.at)));
+    if (person.by) facts.append(fact('By', person.by));
+    card.append(facts);
+
+    const row = document.createElement('div');
+    row.className = 'report-actions';
+    const lift = document.createElement('button');
+    lift.type = 'button';
+    lift.className = 'btn sm primary';
+    lift.textContent = 'Lift suspension';
+    lift.addEventListener('click', async () => {
+      lift.disabled = true;
+      try { await unsuspend(person); }
+      catch (err) { toast(err.message, 'error'); lift.disabled = false; }
+    });
+    row.append(lift);
+    card.append(row);
+    list.append(card);
+  }
 }
 
 /* ---------- feedback ---------- */
@@ -365,6 +512,7 @@ const GROUPS = [
       ['activeToday', 'Seen today'],
       ['newThisWeek', 'New this week'],
       ['admins', 'Administrators'],
+      ['suspended', 'Suspended', true],
     ],
   },
   {
@@ -416,8 +564,12 @@ async function loadOverview() {
 /** The tab badges. One request feeds both. */
 async function loadCounts() {
   try {
-    const { reports, feedback } = await call('GET', '/admin/overview');
-    for (const [sel, n] of [['#open-count', reports.open], ['#feedback-count', feedback.unread]]) {
+    const { reports, feedback, accounts } = await call('GET', '/admin/overview');
+    for (const [sel, n] of [
+      ['#open-count', reports.open],
+      ['#feedback-count', feedback.unread],
+      ['#suspended-count', accounts.suspended],
+    ]) {
       const pill = $(sel);
       pill.textContent = fmtNum(n);
       pill.hidden = !n;
@@ -471,7 +623,10 @@ async function loadAudit() {
 
 /* ---------- tabs ---------- */
 
-const LOADERS = { queue: loadReports, feedback: loadFeedback, overview: loadOverview, audit: loadAudit };
+const LOADERS = {
+  queue: loadReports, suspended: loadSuspended, feedback: loadFeedback,
+  overview: loadOverview, audit: loadAudit,
+};
 let tab = 'queue';
 
 async function show(next) {
@@ -515,6 +670,7 @@ async function start() {
     });
   }
   $('#btn-refresh').addEventListener('click', refresh);
+  wireSuspend();
 
   try {
     const { user } = await call('GET', '/me');

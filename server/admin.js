@@ -13,7 +13,7 @@
 // compromised session cannot escalate — it can only do what that account could
 // already do.
 
-import { handle } from './db.js';
+import { handle, suspensionOf } from './db.js';
 import * as auth from './auth.js';
 
 const REPORT_STATUSES = ['open', 'reviewed', 'actioned', 'dismissed'];
@@ -120,6 +120,11 @@ export function overview(me) {
       registered: one('SELECT COUNT(*) AS n FROM users WHERE is_bot = 0 AND is_guest = 0'),
       guests: one('SELECT COUNT(*) AS n FROM users WHERE is_guest = 1 AND retired = 0'),
       admins: one('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1'),
+      suspended: one(
+        `SELECT COUNT(*) AS n FROM users
+          WHERE suspended_at IS NOT NULL AND (suspended_until IS NULL OR suspended_until > ?)`,
+        Date.now(),
+      ),
       newThisWeek: one('SELECT COUNT(*) AS n FROM users WHERE is_bot = 0 AND created_at > ?', weekAgo),
       activeToday: one('SELECT COUNT(*) AS n FROM users WHERE last_seen > ?', dayAgo),
     },
@@ -163,7 +168,9 @@ export function listReports(me, { status = 'open', limit = 100 } = {}) {
            reporter.name AS reporter_name, reporter.username AS reporter_username,
            subject.name AS subject_name, subject.username AS subject_username,
            subject.email AS subject_email, subject.created_at AS subject_joined,
-           subject.is_guest AS subject_is_guest
+           subject.is_guest AS subject_is_guest, subject.is_admin AS subject_is_admin,
+           subject.suspended_at AS subject_suspended_at,
+           subject.suspended_until AS subject_suspended_until
       FROM reports r
       LEFT JOIN users reporter ON reporter.id = r.reporter_id
       LEFT JOIN users subject ON subject.id = r.subject_id
@@ -194,11 +201,144 @@ export function listReports(me, { status = 'open', limit = 100 } = {}) {
           email: r.subject_email,
           joined: r.subject_joined,
           isGuest: !!r.subject_is_guest,
+          // So the card can offer Suspend, or say it is already done, without a
+          // second request per report.
+          suspended: !!suspensionOf({
+            suspended_at: r.subject_suspended_at,
+            suspended_until: r.subject_suspended_until,
+          }),
+          isAdmin: !!r.subject_is_admin,
           otherReports: countOthers.get(r.subject_id, r.id)?.n ?? 0,
         }
         : null,
     })),
     statuses: REPORT_STATUSES,
+  };
+}
+
+/* ---------- suspension ---------- */
+
+const MAX_SUSPEND_DAYS = 3650;
+
+/**
+ * Put an account out of use.
+ *
+ * Unlike a block, this is **told to the person**. A block is deliberately
+ * undetectable because it is one user's private choice; a suspension is the
+ * operator acting against an account, and someone locked out of their own
+ * messages is owed the reason and the end date. Silently breaking the app for
+ * them would also generate exactly the support traffic the reason avoids.
+ *
+ * Their messages are left alone. Suspension stops someone participating; it is
+ * not a way to delete what has already been said, which would rewrite other
+ * people's conversations.
+ */
+export function suspendUser(me, targetId, { days = null, reason = '', ip = null } = {}) {
+  const actor = requireAdmin(me);
+  const db = handle();
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
+  if (!target) throw new NotFound();
+
+  // Locking yourself out of the only tool that can undo it.
+  if (targetId === me.id) {
+    const err = new Error('You cannot suspend your own account.');
+    err.status = 400;
+    throw err;
+  }
+  // Administrators are not each other's to suspend. Removing someone's access
+  // is a shell operation for whoever runs the server, which keeps this tool from
+  // being a way for one administrator to shut the others out.
+  if (target.is_admin) {
+    const err = new Error('Administrators cannot be suspended from here. Revoke the flag first with npm run admin.');
+    err.status = 400;
+    throw err;
+  }
+
+  // Absent, null or an empty string all mean open-ended — the form's "until
+  // someone lifts it" option submits an empty value, and "" and " " must not
+  // differ. Deliberately not `String(days).trim() === ''`, which would also
+  // swallow `[]` and quietly read it as open-ended.
+  const blank = days === null || days === undefined
+    || (typeof days === 'string' && days.trim() === '');
+  let until = null;
+  if (!blank) {
+    // Number() would take `true` for 1 and `[7]` for 7. A client sending either
+    // has a bug, and quietly suspending somebody for a day would hide it.
+    const numeric = typeof days === 'number' || (typeof days === 'string' && days.trim() !== '');
+    const n = numeric ? Number(days) : NaN;
+    if (!Number.isFinite(n) || n <= 0 || n > MAX_SUSPEND_DAYS) {
+      const err = new Error('A suspension lasts between 1 and 3650 days, or leave it open-ended.');
+      err.status = 400;
+      throw err;
+    }
+    until = Date.now() + n * 24 * 60 * 60 * 1000;
+  }
+
+  const clean = String(reason || '').trim().slice(0, 500) || null;
+  db.prepare(
+    `UPDATE users SET suspended_at = ?, suspended_until = ?, suspended_reason = ?, suspended_by = ?
+      WHERE id = ?`,
+  ).run(Date.now(), until, clean, me.id, targetId);
+
+  // Every device signed out now, not at the next request. A suspension that
+  // leaves an open tab working is not a suspension.
+  auth.destroyAllSessions(targetId);
+
+  logAction({ id: me.id, name: actor.name }, 'user.suspend', {
+    targetType: 'user',
+    targetId,
+    detail: `${target.name}${until ? ` for ${Number(days)} day(s)` : ' indefinitely'}`
+      + `${clean ? ` — ${clean}` : ''}`,
+    ip,
+  });
+  return { ok: true, id: targetId, until };
+}
+
+export function unsuspendUser(me, targetId, { ip = null } = {}) {
+  const actor = requireAdmin(me);
+  const target = handle().prepare('SELECT * FROM users WHERE id = ?').get(targetId);
+  if (!target) throw new NotFound();
+
+  handle().prepare(
+    `UPDATE users SET suspended_at = NULL, suspended_until = NULL,
+       suspended_reason = NULL, suspended_by = NULL WHERE id = ?`,
+  ).run(targetId);
+
+  logAction({ id: me.id, name: actor.name }, 'user.unsuspend', {
+    targetType: 'user', targetId, detail: target.name, ip,
+  });
+  return { ok: true, id: targetId };
+}
+
+/**
+ * Accounts currently held out, so a suspension can be found and undone.
+ *
+ * Rows whose end time has passed are excluded rather than deleted: the lapse is
+ * computed, and leaving the columns in place keeps the history of what happened
+ * on the account.
+ */
+export function listSuspended(me) {
+  requireAdmin(me);
+  const rows = handle().prepare(
+    `SELECT u.*, admin.name AS suspended_by_name
+       FROM users u LEFT JOIN users admin ON admin.id = u.suspended_by
+      WHERE u.suspended_at IS NOT NULL
+        AND (u.suspended_until IS NULL OR u.suspended_until > ?)
+      ORDER BY u.suspended_at DESC LIMIT 200`,
+  ).all(Date.now());
+
+  return {
+    suspended: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      username: r.username,
+      email: r.email,
+      isGuest: !!r.is_guest,
+      at: r.suspended_at,
+      until: r.suspended_until,
+      reason: r.suspended_reason,
+      by: r.suspended_by_name || null,
+    })),
   };
 }
 
