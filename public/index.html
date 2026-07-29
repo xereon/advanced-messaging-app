@@ -67,6 +67,16 @@
 <a class="skip-link" href="#main">Skip to main content</a>
 
 <!-- ============ AUTH SCREEN ============ -->
+<!-- Shown instead of the sign-in form while a remembered session is checked, so
+     a returning user is not flashed the login page on every refresh. Hidden by
+     default: if the script never runs, the sign-in form is what should be here. -->
+<section id="restoring" class="restoring" hidden aria-live="polite">
+  <span class="brand-mark" aria-hidden="true">
+    <svg class="icon" aria-hidden="true"><use href="#i-logo"/></svg>
+  </span>
+  <p>Signing you back in…</p>
+</section>
+
 <section id="auth-screen" class="auth-screen" aria-labelledby="auth-brand-name">
   <div class="auth-card">
     <header class="auth-brand">

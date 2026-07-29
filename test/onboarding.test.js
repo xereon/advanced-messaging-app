@@ -88,6 +88,31 @@ describe('finding people', () => {
   });
 });
 
+describe('the emoji picker never covers the composer', () => {
+  test('it is positioned against the composer\'s real edge, not a viewport guess', () => {
+    assert.match(ui, /function composerAreaTop\(\)/, 'a helper reads the actual layout');
+    const fn = /function positionFloating\([\s\S]*?\n\}/.exec(ui)?.[0] || '';
+    assert.match(fn, /composerAreaTop\(\)/, 'the panel is clamped against it');
+  });
+
+  test('the reaction row uses the same positioning as the full picker', () => {
+    // It used to have its own unclamped copy of the maths, so only the emoji
+    // picker itself was fixed and the small quick-reaction row could still
+    // land on the composer when reacting to the last message.
+    assert.match(ui, /positionFloating\(paletteEl, anchor\)/);
+  });
+
+  test('mobile no longer docks the panel to the viewport bottom', () => {
+    // That was the actual bug: a fixed distance from the screen edge assumes
+    // the composer is always exactly that tall, and overlaps it the moment a
+    // reply preview, an attachment tray, or a multi-line draft makes it taller.
+    const css = read('../public/css/app.css');
+    const mobileBlock = /@media \(max-width: 767px\) \{[\s\S]*?\.emoji-picker[\s\S]*?\n  \}/.exec(css)?.[0] || '';
+    assert.ok(!/top: auto !important/.test(mobileBlock));
+    assert.ok(!/bottom: max\(0\.5rem/.test(mobileBlock));
+  });
+});
+
 describe('the dashboard settings panel', () => {
   test('the cog and every control it drives exist', () => {
     assert.match(adminHtml, /id="btn-settings"/);

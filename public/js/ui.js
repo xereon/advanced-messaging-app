@@ -1806,14 +1806,43 @@ function closeEmojiPicker() {
   pickerOpener = null;
 }
 
-/** Keep a floating panel on screen, preferring above the thing that opened it. */
+/**
+ * The top edge of whichever composer-area element is currently visible.
+ *
+ * `#composer-context` (a reply preview), `#attachment-tray` and `#composer`
+ * itself are siblings, not nested, and each one can be hidden independently —
+ * so "the top of the reserved bottom area" is not a fixed element, it is
+ * whichever of the three currently on screen sits highest.
+ */
+function composerAreaTop() {
+  const visible = ['#composer-context', '#attachment-tray', '#composer']
+    .map((sel) => $(sel))
+    .filter((el) => el && !el.hidden);
+  if (!visible.length) return window.innerHeight;
+  return Math.min(...visible.map((el) => el.getBoundingClientRect().top));
+}
+
+/**
+ * Keep a floating panel on screen, preferring above the thing that opened it,
+ * and never over the composer.
+ *
+ * A fixed distance from the *viewport* bottom is what this used to do on
+ * mobile, and it broke the moment the composer was taller than that guess — a
+ * multi-line draft, a reply preview, a queued attachment all push the composer
+ * up, and the panel stayed pinned to the bottom of the screen regardless,
+ * landing on top of it. Anchoring to the composer's actual top edge instead
+ * means the panel moves with it.
+ */
 function positionFloating(el, anchor) {
   const r = anchor.getBoundingClientRect();
   const w = el.offsetWidth;
   const h = el.offsetHeight;
   el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+
+  const ceiling = composerAreaTop() - 6;
   const above = r.top - h - 6;
-  el.style.top = `${above >= 8 ? above : Math.min(r.bottom + 6, window.innerHeight - h - 8)}px`;
+  const top = Math.min(above >= 8 ? above : r.bottom + 6, ceiling - h);
+  el.style.top = `${Math.max(8, top)}px`;
 }
 
 function openReactPalette(anchor, convoId, msgId) {
@@ -1856,10 +1885,7 @@ function openReactPalette(anchor, convoId, msgId) {
   });
   paletteEl.append(more);
   document.body.append(paletteEl);
-  const r = anchor.getBoundingClientRect();
-  const pw = paletteEl.offsetWidth;
-  paletteEl.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - pw - 8))}px`;
-  paletteEl.style.top = `${Math.max(8, r.top - paletteEl.offsetHeight - 6)}px`;
+  positionFloating(paletteEl, anchor);
   paletteEl.querySelector('button').focus();
 }
 

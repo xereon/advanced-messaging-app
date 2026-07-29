@@ -14,6 +14,22 @@ const device = db.deviceInfo();
 loadCachedSettings(device.lastUserId);
 applySettings();
 
+// Same idea, one step further. The sign-in form is in the markup unhidden, so it
+// paints as soon as the HTML parses — and then `api.me()` takes a network round
+// trip to discover we were signed in all along. That gap is the login page
+// flashing on every refresh.
+//
+// The session cookie is httpOnly, so the script cannot look for it. What it can
+// check is whether this device remembers an account, which is the same signal
+// used to pre-paint the theme. If it does, show a quiet holding state instead of
+// the form until we know. Getting it wrong costs a returning-but-expired session
+// one extra moment; getting it right saves everybody else a flash on every load.
+const expectSession = !!device.lastUserId;
+if (expectSession) {
+  $('#auth-screen').hidden = true;
+  $('#restoring').hidden = false;
+}
+
 /* ---------- helpers ---------- */
 
 function showView(name) {
@@ -356,4 +372,9 @@ try {
 } catch {
   renderPinUnlock();
   showView('signin');
+} finally {
+  // Whichever way it went, the holding state has done its job. initUI already
+  // revealed the chat screen on success; on failure the form comes back.
+  $('#restoring').hidden = true;
+  if (expectSession && $('#chat-screen').hidden) $('#auth-screen').hidden = false;
 }

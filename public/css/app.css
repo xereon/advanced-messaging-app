@@ -525,6 +525,32 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 .menu-header strong { display: block; color: var(--text); font-size: 0.9375rem; }
 
 /* ---------- Auth ---------- */
+/* The gap between "page parsed" and "we know who you are". Deliberately plain:
+   a spinner that appears for 80ms is more distracting than a still logo. */
+.restoring {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  color: var(--text-3);
+}
+.restoring p { margin: 0; font-size: 0.9375rem; }
+.restoring .brand-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 3rem; height: 3rem;
+  border-radius: var(--radius-m);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.restoring .icon { width: 1.75rem; height: 1.75rem; }
+/* Only after a moment, so a fast reconnect shows nothing moving at all. */
+@media (prefers-reduced-motion: no-preference) {
+  .restoring { animation: restoring-in 0.25s ease-out 0.35s both; }
+  @keyframes restoring-in { from { opacity: 0; } to { opacity: 1; } }
+}
+
 .auth-screen {
   height: 100%;
   display: flex;
@@ -1936,12 +1962,13 @@ input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0.4rem 
 .react-more:hover { color: var(--accent); }
 
 @media (max-width: 767px) {
-  /* A floating panel is fiddly on a phone; anchor it to the bottom instead. */
+  /* Full width rather than a small floating card, which is fiddly to hit on a
+     phone. The vertical position is left to JS (positionFloating), which
+     anchors to the composer's real top edge — docking to the viewport bottom
+     here used to overlap the composer whenever it grew taller than expected. */
   .emoji-picker {
     left: 0.5rem !important;
     right: 0.5rem;
-    top: auto !important;
-    bottom: max(0.5rem, env(safe-area-inset-bottom));
     width: auto;
   }
   .emoji-grid { max-height: 40vh; }
