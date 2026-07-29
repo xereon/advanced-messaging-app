@@ -102,6 +102,18 @@ describe('the emoji picker never covers the composer', () => {
     assert.match(ui, /positionFloating\(paletteEl, anchor\)/);
   });
 
+  test('it repositions on every repaint, not only when it first opens', () => {
+    // The panel's height follows its content — Recent can be two emoji tall,
+    // a full category eighty. Repositioning once at open time anchored the top
+    // to whichever category happened to be showing then: switching to a taller
+    // one grew the box downward from that fixed point, off the bottom of the
+    // screen and over the composer.
+    const fn = /const paint = \([\s\S]*?\n  \};/.exec(ui)?.[0] || '';
+    assert.ok(fn, 'paint() exists');
+    assert.match(fn, /positionFloating\(box, anchor\)/,
+      'every repaint — a tab switch or a search — must reposition the panel');
+  });
+
   test('mobile no longer docks the panel to the viewport bottom', () => {
     // That was the actual bug: a fixed distance from the screen edge assumes
     // the composer is always exactly that tall, and overlaps it the moment a

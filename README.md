@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 401 tests
+npm test     # 402 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```

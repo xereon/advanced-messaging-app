@@ -7,7 +7,7 @@
 //
 // Bump CACHE when the shell changes; old caches are dropped on activate.
 
-const CACHE = 'relay-shell-v12';
+const CACHE = 'relay-shell-v13';
 
 const SHELL = [
   '/',

@@ -1742,21 +1742,28 @@ function openEmojiPicker(anchor, onPick, opener = null) {
     grid.replaceChildren();
     if (!list.length) {
       status.textContent = emptyMessage;
-      return;
+    } else {
+      status.textContent = '';
+      for (const char of list) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'emoji-cell';
+        b.setAttribute('role', 'option');
+        b.textContent = char;
+        b.addEventListener('click', () => {
+          emoji.rememberEmoji(char);
+          onPick(char);
+        });
+        grid.append(b);
+      }
     }
-    status.textContent = '';
-    for (const char of list) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'emoji-cell';
-      b.setAttribute('role', 'option');
-      b.textContent = char;
-      b.addEventListener('click', () => {
-        emoji.rememberEmoji(char);
-        onPick(char);
-      });
-      grid.append(b);
-    }
+    // The panel's height follows its content — Recent might be two emoji tall,
+    // Smileys is eighty. Repositioning only when the panel first opened left it
+    // anchored to whichever category happened to be shown then: switching to a
+    // taller one grew the box downward from that fixed top, past the bottom of
+    // the screen and over the composer. Redone here, every repaint keeps the
+    // bottom edge pinned above the composer regardless of which way it moves.
+    if (box.isConnected) positionFloating(box, anchor);
   };
 
   const showCategory = (id) => {
