@@ -190,8 +190,11 @@ export async function appendMessage(convoId, draft) {
     return message;
   } catch (err) {
     const idx = list.findIndex((m) => m.id === clientId);
-    // A refusal is final; anything else is worth retrying when we reconnect.
-    const permanent = err?.status >= 400 && err.status < 500;
+    // Being over the rate limit is a 4xx, but it is the one refusal that stops
+    // being true on its own — so it queues and retries rather than throwing
+    // away something already typed.
+    const throttled = err?.status === 429;
+    const permanent = err?.status >= 400 && err.status < 500 && !throttled;
     if (!permanent) {
       outbox.add({
         userId: me.id, clientId, convoId,
@@ -203,13 +206,38 @@ export async function appendMessage(convoId, draft) {
       list[idx] = { ...list[idx], pending: !permanent, failed: permanent, queued: !permanent };
       emit('message-updated', { convoId, msg: list[idx] });
     }
+    if (throttled) scheduleThrottledFlush(err.retryAfter);
     emit(permanent ? 'error' : 'queued', {
-      message: permanent ? err.message : 'No connection — this will send when you are back online.',
+      message: permanent ? err.message
+        : throttled ? err.message
+          : 'No connection — this will send when you are back online.',
       count: outbox.count(me.id),
     });
     if (permanent) throw err;
     return null;
   }
+}
+
+/**
+ * Retry the outbox once the rate-limit window has passed.
+ *
+ * Nothing else would: a flush is triggered by coming back online or by the
+ * event stream reconnecting, and neither happens here — the connection was
+ * fine, the server simply said "not yet". One timer is kept rather than one per
+ * message, because a burst that trips the limit trips it for every message in
+ * the burst, and they all clear at the same moment.
+ */
+let throttleTimer = null;
+
+function scheduleThrottledFlush(retryAfterSeconds) {
+  if (throttleTimer) return;
+  // A second of slack, so the retry lands after the window rather than on its
+  // boundary, and a floor in case the server sent nothing usable.
+  const waitMs = (Math.max(1, Number(retryAfterSeconds) || 1) + 1) * 1000;
+  throttleTimer = setTimeout(() => {
+    throttleTimer = null;
+    flushOutbox();
+  }, waitMs);
 }
 
 /**
@@ -242,6 +270,7 @@ async function doFlush() {
       return message;
     },
     {
+      onThrottled: (err) => scheduleThrottledFlush(err.retryAfter),
       onGivenUp: (entry, err) => {
         const list = messages.get(entry.convoId) || [];
         const i = list.findIndex((m) => m.id === entry.clientId);

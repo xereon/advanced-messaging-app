@@ -470,6 +470,24 @@ export function rateLimit(key, { limit, windowMs }) {
   }
 }
 
+/**
+ * Seconds until `key`'s window resets, for a Retry-After header.
+ *
+ * A refusal that does not say when to try again leaves the client guessing, and
+ * a client that guesses either gives up on a message it could have sent or
+ * retries in a loop. Rounded up and floored at one, because "retry in 0
+ * seconds" invites an immediate retry that would be refused again.
+ */
+export function retryAfterSeconds(key, windowMs) {
+  try {
+    const row = handle().prepare('SELECT window_start FROM rate_limits WHERE key = ?').get(key);
+    if (!row) return 1;
+    return Math.max(1, Math.ceil((row.window_start + windowMs - Date.now()) / 1000));
+  } catch {
+    return 1;
+  }
+}
+
 export function resetRateLimits() {
   try { handle().prepare('DELETE FROM rate_limits').run(); } catch { /* not open */ }
 }

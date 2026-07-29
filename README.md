@@ -263,6 +263,7 @@ long outage the client pulls a fresh snapshot instead.
 - Login, PIN, sign-up and code requests are rate limited per address and per
   account. Sign-in returns the same message and does comparable work whether or
   not the address is registered.
+- **Writing is rate limited too**, per account — see below.
 - **Credentials never touch a URL.** Every form carrying a secret is explicitly
   `method="post"`, so even with JavaScript disabled or broken the browser cannot
   fall back to a GET that would write `?password=` into the address bar, browser
@@ -274,6 +275,53 @@ long outage the client pulls a fresh snapshot instead.
   Auth responses send `Cache-Control: no-store`, the whole app sends
   `Referrer-Policy: no-referrer`, and the 500 handler logs the path only, never
   the query string.
+
+### Write limits
+
+Signing in was throttled from the start; writing was not, which left one script
+able to flood a conversation faster than anyone could read it. Every write path
+now carries a per-account budget:
+
+| Path | Burst | Sustained |
+| --- | --- | --- |
+| Sending a message | 30 / 10s | 600 / hour |
+| Uploading a file | 10 / min | 60 / hour |
+| Reacting | 60 / min | 600 / hour |
+| Typing notices | 120 / min | — |
+| Starting a conversation | 10 / min | 60 / hour |
+| Editing a message | 60 / min | — |
+| Membership changes | 30 / min | — |
+| Contact changes | 60 / min | — |
+| Profile edits | 30 / min | — |
+| Message search | 60 / min | — |
+
+The numbers sit well above deliberate human use — 30 messages in 10 seconds is
+faster than anyone types, and 600 an hour is one every six seconds sustained —
+so the burst tier catches a script within seconds while the sustained tier
+catches a slow drip. **Reading history is deliberately not limited**: paging back
+through a long conversation is normal use, and a scroll that stops loading looks
+like a broken app rather than a protected one.
+
+Budgets are keyed to the **account**, not the address. An attacker holding a
+session does not need to change IP, and a shared office router must not mean a
+shared budget. A second tab on the same account shares one budget, so opening
+another is not a way to buy more. **Guest sessions get half**, because a guest
+session is handed to whoever asks for one and is therefore the cheapest identity
+to abuse.
+
+A refusal is a `429` carrying `Retry-After` in both the header and the body, and
+the client treats it as the one `4xx` that stops being true on its own: the
+message stays in the outbox marked *queued* rather than *failed*, and a single
+timer retries the queue once the window has passed. Losing something you already
+typed to a limit that clears itself in ten seconds would be the worst of both
+behaviours. The retry still spends one of the outbox's eight attempts, so a
+server that refuses indefinitely cannot produce a client that retries
+indefinitely.
+
+Counters live in SQLite rather than in process memory, because held per process
+every limit is silently multiplied by the number of workers. A limiter that
+cannot read its own state allows the request — a broken counter must not become
+an outage.
 
 ### Encryption at rest
 

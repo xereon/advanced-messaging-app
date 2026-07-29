@@ -54,9 +54,10 @@ function bumpAttempt(clientId) {
  *
  * `send` resolves on success and rejects otherwise. A rejection carrying a
  * 4xx status is permanent — the server refused the message, and retrying will
- * not change its mind — so it is dropped rather than retried forever.
+ * not change its mind — so it is dropped rather than retried forever. The
+ * exception is 429: see the catch below.
  */
-export async function flush(userId, send, { onSent, onGivenUp } = {}) {
+export async function flush(userId, send, { onSent, onGivenUp, onThrottled } = {}) {
   const queued = pending(userId);
   let sent = 0;
 
@@ -67,6 +68,19 @@ export async function flush(userId, send, { onSent, onGivenUp } = {}) {
       sent += 1;
       onSent?.(entry, message);
     } catch (err) {
+      // Being over the rate limit is the one 4xx that stops being true on its
+      // own, so it stays queued. It still spends an attempt, because a server
+      // that refuses forever must not mean a client that retries forever. The
+      // budget it exceeded is shared by everything behind it, so the rest of
+      // the queue would be refused too — stop and let the caller retry later.
+      if (err?.status === 429) {
+        if (bumpAttempt(entry.clientId) >= MAX_ATTEMPTS) {
+          onGivenUp?.(exhaust(entry.clientId), err);
+          continue;
+        }
+        onThrottled?.(err);
+        break;
+      }
       const permanent = err?.status >= 400 && err.status < 500;
       const attempts = permanent ? MAX_ATTEMPTS : bumpAttempt(entry.clientId);
       if (permanent || attempts >= MAX_ATTEMPTS) {

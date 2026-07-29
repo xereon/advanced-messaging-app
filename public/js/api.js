@@ -2,7 +2,13 @@
 // The session lives in an httpOnly cookie, so nothing here handles tokens.
 
 export class ApiError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  // retryAfter is seconds, present on a 429. A refusal that says when to try
+  // again is the difference between a queued message and a lost one.
+  constructor(status, message, retryAfter = 0) {
+    super(message);
+    this.status = status;
+    this.retryAfter = retryAfter;
+  }
 }
 
 /**
@@ -38,7 +44,13 @@ async function request(method, path, body) {
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
   if (res.status === 401 && !AUTH_PATHS.test(path)) onUnauthorized?.();
-  if (!res.ok) throw new ApiError(res.status, data.error || `Request failed (${res.status}).`);
+  if (!res.ok) {
+    // Trust the body over the header: both are ours, and the body survives a
+    // proxy that strips headers it does not recognise.
+    const retryAfter = Number(data.retryAfter || res.headers.get('Retry-After') || 0);
+    throw new ApiError(res.status, data.error || `Request failed (${res.status}).`,
+      Number.isFinite(retryAfter) ? retryAfter : 0);
+  }
   return data;
 }
 

@@ -59,7 +59,7 @@ export function client(base) {
       if (/relay_session=;/.test(c)) cookie = null;
     }
     const text = await res.text();
-    return { status: res.status, body: text ? JSON.parse(text) : {} };
+    return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : {} };
   };
   return {
     get: (p, o) => call('GET', p, undefined, o),

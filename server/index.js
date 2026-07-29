@@ -62,6 +62,43 @@ function send(res, status, body, headers = {}) {
 
 const fail = (res, status, message) => send(res, status, { error: message });
 
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+
+/** Per-account write budgets. See overWriteLimit for the reasoning. */
+const WRITE_LIMITS = {
+  send: [{ limit: 30, windowMs: 10 * 1000 }, { limit: 600, windowMs: HOUR }],
+  upload: [{ limit: 10, windowMs: MINUTE }, { limit: 60, windowMs: HOUR }],
+  edit: [{ limit: 60, windowMs: MINUTE }],
+  react: [{ limit: 60, windowMs: MINUTE }, { limit: 600, windowMs: HOUR }],
+  // Typing republishes to every member on each call. The client sends about one
+  // ping every three seconds for the conversation you are looking at; a script
+  // would not throttle itself at all.
+  typing: [{ limit: 120, windowMs: MINUTE }],
+  // Starting a conversation is how you reach a stranger, so it is the spam
+  // vector rather than the cost.
+  convo: [{ limit: 10, windowMs: MINUTE }, { limit: 60, windowMs: HOUR }],
+  member: [{ limit: 30, windowMs: MINUTE }],
+  contact: [{ limit: 60, windowMs: MINUTE }],
+  profile: [{ limit: 30, windowMs: MINUTE }],
+  // Search decrypts and scans every message you can see, which makes it the
+  // most expensive read in the app.
+  search: [{ limit: 60, windowMs: MINUTE }],
+};
+
+const LIMIT_MESSAGES = {
+  send: 'You are sending messages faster than we allow. Wait a few seconds and it will go through.',
+  upload: 'That is a lot of uploads at once. Wait a minute and try again.',
+  edit: 'Too many edits at once. Wait a minute.',
+  react: 'Too many reactions at once. Wait a minute.',
+  typing: 'Slow down.',
+  convo: 'You are starting conversations too quickly. Wait a minute.',
+  member: 'Too many membership changes at once. Wait a minute.',
+  contact: 'Too many contact changes at once. Wait a minute.',
+  profile: 'Too many profile changes at once. Wait a minute.',
+  search: 'Too many searches at once. Wait a minute.',
+};
+
 function readCookies(req) {
   const out = {};
   for (const part of (req.headers.cookie || '').split(';')) {
@@ -371,6 +408,34 @@ async function handleApi(req, res, url) {
     && (/^\/conversations\/[^/]+\/attachments$/.test(path) || path === '/profile/avatar');
   const body = SAFE.has(method) || isUpload ? {} : await readBody(req);
   const need = () => { if (!me) throw new api.HttpError(401, 'Sign in first.'); return me; };
+
+  /**
+   * Refuse a write that is past this account's budget, or return false.
+   *
+   * Signing in has been throttled since the start; writing had nothing, which
+   * left one script able to flood a conversation faster than anyone could read
+   * it. Keyed per account rather than per address, because the account is what
+   * membership is checked against — a shared office address must not mean a
+   * shared budget, and an attacker with a session does not need to change IP.
+   *
+   * Each kind has a burst tier that catches a script within seconds and, where
+   * a slow drip would still be abuse, a sustained tier behind it. The numbers
+   * sit well above deliberate human use: 30 messages in 10 seconds is faster
+   * than anyone types, and 600 in an hour is one every six seconds sustained.
+   */
+  const overWriteLimit = (kind, user) => {
+    // A guest session is handed to whoever asks for one, which makes it the
+    // cheapest identity to abuse and the one worth spending least on.
+    const scale = user.is_guest ? 0.5 : 1;
+    for (const tier of WRITE_LIMITS[kind]) {
+      const key = `w:${kind}:${user.id}:${tier.windowMs}`;
+      if (auth.rateLimit(key, { limit: Math.ceil(tier.limit * scale), windowMs: tier.windowMs })) continue;
+      const wait = auth.retryAfterSeconds(key, tier.windowMs);
+      send(res, 429, { error: LIMIT_MESSAGES[kind], retryAfter: wait }, { 'Retry-After': String(wait) });
+      return true;
+    }
+    return false;
+  };
   let m;
 
   /**
@@ -645,11 +710,15 @@ async function handleApi(req, res, url) {
   }
 
   if (path === '/conversations' && method === 'POST') {
-    return send(res, 201, { conversation: api.createConversation(need(), body) });
+    const user = need();
+    if (overWriteLimit('convo', user)) return;
+    return send(res, 201, { conversation: api.createConversation(user, body) });
   }
 
   if ((m = path.match(/^\/conversations\/([^/]+)\/messages$/)) && method === 'POST') {
-    return send(res, 201, { message: api.sendMessage(need(), decodeURIComponent(m[1]), body) });
+    const user = need();
+    if (overWriteLimit('send', user)) return;
+    return send(res, 201, { message: api.sendMessage(user, decodeURIComponent(m[1]), body) });
   }
   if ((m = path.match(/^\/conversations\/([^/]+)\/messages$/)) && method === 'GET') {
     return send(res, 200, api.history(need(), decodeURIComponent(m[1]), {
@@ -662,6 +731,7 @@ async function handleApi(req, res, url) {
   // headers so the stream can go straight to disk with a hard size cap.
   if ((m = path.match(/^\/conversations\/([^/]+)\/attachments$/)) && method === 'POST') {
     const user = need();
+    if (overWriteLimit('upload', user)) return;
     const convoId = decodeURIComponent(m[1]);
     api.assertConvoMember(convoId, user.id);
     const attachment = await files.store(req, {
@@ -688,29 +758,39 @@ async function handleApi(req, res, url) {
     return send(res, 200, api.setMeta(need(), decodeURIComponent(m[1]), body));
   }
   if ((m = path.match(/^\/conversations\/([^/]+)\/typing$/)) && method === 'POST') {
-    return send(res, 200, api.typing(need(), decodeURIComponent(m[1])));
+    const user = need();
+    if (overWriteLimit('typing', user)) return;
+    return send(res, 200, api.typing(user, decodeURIComponent(m[1])));
   }
   if ((m = path.match(/^\/messages\/([^/]+)$/)) && method === 'PATCH') {
-    return send(res, 200, { message: api.editMessage(need(), decodeURIComponent(m[1]), body.text) });
+    const user = need();
+    if (overWriteLimit('edit', user)) return;
+    return send(res, 200, { message: api.editMessage(user, decodeURIComponent(m[1]), body.text) });
   }
   if ((m = path.match(/^\/messages\/([^/]+)$/)) && method === 'DELETE') {
     return send(res, 200, { message: await api.deleteMessage(need(), decodeURIComponent(m[1])) });
   }
   if ((m = path.match(/^\/messages\/([^/]+)\/reactions$/)) && method === 'POST') {
-    return send(res, 200, { message: api.toggleReaction(need(), decodeURIComponent(m[1]), body.emoji) });
+    const user = need();
+    if (overWriteLimit('react', user)) return;
+    return send(res, 200, { message: api.toggleReaction(user, decodeURIComponent(m[1]), body.emoji) });
   }
 
   if ((m = path.match(/^\/conversations\/([^/]+)$/)) && method === 'PATCH') {
     return send(res, 200, { conversation: api.renameGroup(need(), decodeURIComponent(m[1]), body.title) });
   }
   if ((m = path.match(/^\/conversations\/([^/]+)\/members$/)) && method === 'POST') {
-    return send(res, 200, { conversation: api.addMember(need(), decodeURIComponent(m[1]), body.userId) });
+    const user = need();
+    if (overWriteLimit('member', user)) return;
+    return send(res, 200, { conversation: api.addMember(user, decodeURIComponent(m[1]), body.userId) });
   }
   if ((m = path.match(/^\/conversations\/([^/]+)\/members\/([^/]+)$/)) && method === 'DELETE') {
     return send(res, 200, api.removeMember(need(), decodeURIComponent(m[1]), decodeURIComponent(m[2])));
   }
   if (path === '/search/messages' && method === 'GET') {
-    return send(res, 200, api.searchMessages(need(), url.searchParams.get('q'), url.searchParams.get('limit')));
+    const user = need();
+    if (overWriteLimit('search', user)) return;
+    return send(res, 200, api.searchMessages(user, url.searchParams.get('q'), url.searchParams.get('limit')));
   }
 
   if (path === '/blocks' && method === 'GET') {
@@ -878,7 +958,11 @@ async function handleApi(req, res, url) {
       stillHere ? {} : { 'Set-Cookie': auth.clearCookieHeader() });
   }
 
-  if (path === '/contacts' && method === 'POST') return send(res, 200, api.addContact(need(), body.contactId));
+  if (path === '/contacts' && method === 'POST') {
+    const user = need();
+    if (overWriteLimit('contact', user)) return;
+    return send(res, 200, api.addContact(user, body.contactId));
+  }
   if ((m = path.match(/^\/contacts\/([^/]+)$/)) && method === 'DELETE') {
     return send(res, 200, api.removeContact(need(), decodeURIComponent(m[1])));
   }
@@ -897,7 +981,11 @@ async function handleApi(req, res, url) {
     return send(res, 200, push.removeSubscription(need().id, body.endpoint));
   }
 
-  if (path === '/profile' && method === 'PATCH') return send(res, 200, { user: api.updateProfile(need(), body) });
+  if (path === '/profile' && method === 'PATCH') {
+    const user = need();
+    if (overWriteLimit('profile', user)) return;
+    return send(res, 200, { user: api.updateProfile(user, body) });
+  }
   if (path === '/settings' && method === 'PUT') return send(res, 200, api.saveSettings(need(), body.settings));
   if (path === '/account/pin' && method === 'POST') return send(res, 200, await api.setPin(need(), body.pin));
   if (path === '/account/password' && method === 'POST') {
