@@ -262,6 +262,8 @@ export function searchUsers(me, q) {
   if (term.length < DIRECTORY_MIN_QUERY) return { users: [], minQuery: DIRECTORY_MIN_QUERY };
 
   const literal = likeLiteral(term);
+  // Only meaningful when the term is actually an address, but harmless otherwise.
+  const emailHmac = crypt.lookupHash(term);
   const prefix = `${literal}%`;
   const wordPrefix = `% ${literal}%`;
   const hidden = blockedIdsFor(me.id);
@@ -275,9 +277,17 @@ export function searchUsers(me, q) {
        AND (LOWER(IFNULL(username,'')) LIKE ? ESCAPE '\\'
          OR LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(name) LIKE ? ESCAPE '\\'
          OR LOWER(IFNULL(role,'')) LIKE ? ESCAPE '\\' OR LOWER(IFNULL(role,'')) LIKE ? ESCAPE '\\'
-         OR LOWER(IFNULL(email,'')) = ?)
+         -- Exact address only, and against the keyed hash once encryption is on:
+         -- the stored ciphertext differs every write, so a literal compare
+         -- would silently stop matching.
+         OR (? IS NOT NULL AND email_hmac = ?)
+         OR (? IS NULL AND LOWER(IFNULL(email,'')) = ?))
      ORDER BY name LIMIT 50`)
-    .all(me.id, Date.now(), demoBotsEnabled() ? 1 : 0, prefix, prefix, wordPrefix, prefix, wordPrefix, term);
+    .all(
+      me.id, Date.now(), demoBotsEnabled() ? 1 : 0,
+      prefix, prefix, wordPrefix, prefix, wordPrefix,
+      emailHmac, emailHmac, emailHmac, term,
+    );
 
   const known = new Set(db.prepare(`
     SELECT m2.user_id AS id FROM members m1
@@ -921,12 +931,15 @@ export function updateProfile(me, patch = {}) {
   const nextColor = patch.avatarColor === undefined ? me.avatar_color : String(patch.avatarColor);
   if (!/^#[0-9a-fA-F]{6}$/.test(nextColor)) bad('Invalid colour.');
 
+  // Sealed on the way in, decrypted by publicUser on the way out. The emoji is
+  // left alone: one pictograph is not worth a key operation, and it is chosen
+  // from a fixed list rather than typed.
   const fields = {
     username: nextUsername(me, patch.username),
-    pronouns: optionalText(patch.pronouns, PROFILE_LIMITS.pronouns),
-    title: optionalText(patch.title, PROFILE_LIMITS.title),
-    bio: optionalText(patch.bio, PROFILE_LIMITS.bio),
-    status_text: optionalText(patch.statusText, PROFILE_LIMITS.statusText),
+    pronouns: crypt.seal(optionalText(patch.pronouns, PROFILE_LIMITS.pronouns)),
+    title: crypt.seal(optionalText(patch.title, PROFILE_LIMITS.title)),
+    bio: crypt.seal(optionalText(patch.bio, PROFILE_LIMITS.bio)),
+    status_text: crypt.seal(optionalText(patch.statusText, PROFILE_LIMITS.statusText)),
     status_emoji: optionalText(patch.statusEmoji, PROFILE_LIMITS.statusEmoji),
   };
 

@@ -65,7 +65,7 @@ console.log(`${rows.length} ${status === 'all' ? '' : status + ' '}report${rows.
 for (const r of rows) {
   console.log(`  ${r.id}   [${r.status}]  ${new Date(r.created_at).toISOString()}`);
   console.log(`    ${r.reporter_name || 'a deleted account'} reported ${r.subject_name || 'a deleted account'}`
-    + `${r.subject_email ? ` <${r.subject_email}>` : ''}`);
+    + `${r.subject_email ? ` <${crypt.open(r.subject_email)}>` : ''}`);
   console.log(`    reason: ${r.reason}`);
   if (r.note) console.log(`    note:   ${crypt.open(r.note)}`);
   if (r.message_text) console.log(`    quoted: ${JSON.stringify(crypt.open(r.message_text).slice(0, 160))}`);

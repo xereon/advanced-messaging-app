@@ -12,13 +12,14 @@
 import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import { deflateSync } from 'node:zlib';
 
-import { startTestServer, signUp } from './helpers.js';
+import { startTestServer, signUp, client } from './helpers.js';
 import * as db from '../server/db.js';
 import * as crypt from '../server/crypt.js';
 
@@ -31,6 +32,29 @@ after(async () => { crypt.setKey(null); await srv.stop(); });
 
 // Each test decides whether encryption is on, so no test inherits it.
 beforeEach(() => { crypt.setKey(null); });
+
+/** A real, minimal PNG — the avatar route sniffs the type from the bytes. */
+function pngBytes(w = 8, h = 8) {
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  let o = 0;
+  for (let y = 0; y < h; y++) { raw[o++] = 0; for (let x = 0; x < w; x++) { raw[o++] = 10; raw[o++] = 200; raw[o++] = 90; } }
+  const crc = (buf) => {
+    let c = ~0;
+    for (const b of buf) { c ^= b; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1)); }
+    const out = Buffer.alloc(4); out.writeUInt32BE((~c) >>> 0); return out;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    return Buffer.concat([len, body, crc(body)]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
 
 const rawText = (id) => db.handle().prepare('SELECT text FROM messages WHERE id = ?').get(id).text;
 
@@ -252,6 +276,147 @@ describe('what the database file holds', () => {
 
     const feedback = await a.client.get('/api/admin/feedback');
     assert.ok(feedback.body.feedback.some((f) => f.message === 'something is broken'));
+  });
+});
+
+describe('personal data beyond messages', () => {
+  test('profile free text is not readable in the row', async () => {
+    crypt.setKey(KEY);
+    const me = await signUp(srv.base, 'Profile Enc', 'profile@enc.test');
+    await me.client.patch('/api/profile', {
+      bio: 'CANARY a sentence about myself',
+      statusText: 'CANARY heads down',
+      pronouns: 'they/them',
+      title: 'CANARY Head of Widgets',
+    });
+
+    const row = db.handle().prepare('SELECT bio, status_text, pronouns, title FROM users WHERE id = ?')
+      .get(me.user.id);
+    for (const [col, value] of Object.entries(row)) {
+      assert.ok(crypt.isSealed(value), `${col} must be sealed`);
+      assert.ok(!value.includes('CANARY'), `${col} must not hold the words`);
+    }
+
+    // And it all reads back.
+    const fresh = (await me.client.get('/api/me')).body.user;
+    assert.equal(fresh.bio, 'CANARY a sentence about myself');
+    assert.equal(fresh.statusText, 'CANARY heads down');
+    assert.equal(fresh.pronouns, 'they/them');
+    assert.equal(fresh.title, 'CANARY Head of Widgets');
+  });
+
+  test('names and usernames are deliberately left readable', async () => {
+    crypt.setKey(KEY);
+    const me = await signUp(srv.base, 'Clear Name', 'clearname@enc.test');
+    const row = db.handle().prepare('SELECT name, username FROM users WHERE id = ?').get(me.user.id);
+    // Both are matched by prefix in people search, which ciphertext cannot do,
+    // and both are already shown to any signed-in account. Encrypting them would
+    // cost a working feature to hide something the app displays anyway.
+    assert.equal(row.name, 'Clear Name');
+    assert.ok(!crypt.isSealed(row.username));
+  });
+
+  test('an email address is sealed but still finds its account', async () => {
+    crypt.setKey(KEY);
+    const me = await signUp(srv.base, 'Mail Enc', 'mail.enc@enc.test');
+
+    const row = db.handle().prepare('SELECT email, email_hmac FROM users WHERE id = ?').get(me.user.id);
+    assert.ok(crypt.isSealed(row.email), 'the address is encrypted');
+    assert.ok(!row.email.includes('mail.enc'), 'and not readable in the row');
+    assert.ok(row.email_hmac, 'a keyed hash is stored for lookup');
+    assert.ok(!row.email_hmac.includes('mail.enc'));
+
+    // Sign-in is the path that matters, and it goes through the hash.
+    const fresh = client(srv.base);
+    assert.equal((await fresh.post('/api/auth/login', {
+      email: 'mail.enc@enc.test', password: 'hunter2hunter',
+    })).status, 200);
+    assert.equal((await fresh.get('/api/me')).body.user.email, 'mail.enc@enc.test');
+  });
+
+  test('the address is still unique, now via the hash', async () => {
+    crypt.setKey(KEY);
+    await signUp(srv.base, 'First Holder', 'taken.enc@enc.test');
+    // The UNIQUE constraint on `email` cannot help any more — the ciphertext
+    // differs every write — so this proves it moved onto email_hmac.
+    const again = await client(srv.base).post('/api/auth/signup', {
+      name: 'Second Holder', email: 'taken.enc@enc.test', password: 'hunter2hunter',
+    });
+    assert.equal(again.status, 409);
+  });
+
+  test('one-time codes do not store the address they are for', async () => {
+    crypt.setKey(KEY);
+    await signUp(srv.base, 'Code Enc', 'code.enc@enc.test');
+    const asked = await client(srv.base).post('/api/auth/code/request', { email: 'code.enc@enc.test' });
+    assert.equal(asked.status, 200);
+
+    const rows = db.handle().prepare('SELECT email FROM login_codes').all();
+    assert.ok(rows.length, 'precondition: a code was issued');
+    for (const r of rows) assert.ok(!r.email.includes('code.enc'), 'keyed by hash, not by address');
+
+    // And it can still be redeemed.
+    const res = await client(srv.base).post('/api/auth/code/verify', {
+      email: 'code.enc@enc.test', code: asked.body.code,
+    });
+    assert.equal(res.status, 200);
+  });
+
+  test('the exact-address directory match still works', async () => {
+    crypt.setKey(KEY);
+    const seeker = await signUp(srv.base, 'Seeker Enc', 'seeker.enc@enc.test');
+    const target = await signUp(srv.base, 'Target Enc', 'target.enc@enc.test');
+    const found = await seeker.client.get('/api/users?q=target.enc@enc.test');
+    assert.ok(found.body.users.some((u) => u.id === target.user.id),
+      'matching on an address has to compare hashes once it is encrypted');
+  });
+});
+
+describe('files on disk', () => {
+  test('an uploaded file is unreadable on disk but serves intact', async () => {
+    crypt.setKey(KEY);
+    const me = await signUp(srv.base, 'File Enc', 'file@enc.test');
+    const png = pngBytes();
+
+    const up = await fetch(`${srv.base}/api/profile/avatar`, {
+      method: 'POST',
+      headers: { Cookie: me.client.cookie, 'X-Relay-Client': '1', 'Content-Type': 'image/png' },
+      body: png,
+    });
+    assert.equal(up.status, 200);
+    const { user } = await up.json();
+
+    const onDisk = readFileSync(
+      db.handle().prepare('SELECT avatar_path FROM users WHERE id = ?').get(me.user.id).avatar_path,
+    );
+    assert.ok(crypt.isSealedFile(onDisk), 'the stored bytes carry the encrypted-file header');
+    assert.ok(!onDisk.subarray(0, 8).equals(png.subarray(0, 8)), 'the PNG signature is gone');
+
+    // Served back byte-for-byte, with the tag checked before anything is sent.
+    const got = await fetch(srv.base + user.avatarUrl, { headers: { Cookie: me.client.cookie } });
+    assert.equal(got.status, 200);
+    assert.equal(got.headers.get('content-type'), 'image/png');
+    assert.ok(Buffer.from(await got.arrayBuffer()).equals(png), 'identical to what was uploaded');
+  });
+
+  test('a plain file left from before still serves', async () => {
+    // A database part-way through the migration has both forms on disk.
+    crypt.setKey(null);
+    const me = await signUp(srv.base, 'Mixed File', 'mixedfile@enc.test');
+    const png = pngBytes();
+    await fetch(`${srv.base}/api/profile/avatar`, {
+      method: 'POST',
+      headers: { Cookie: me.client.cookie, 'X-Relay-Client': '1', 'Content-Type': 'image/png' },
+      body: png,
+    });
+    const path = db.handle().prepare('SELECT avatar_path FROM users WHERE id = ?').get(me.user.id).avatar_path;
+    assert.ok(!crypt.isSealedFile(readFileSync(path)), 'stored plain, as it was written');
+
+    crypt.setKey(KEY);
+    const url = (await me.client.get('/api/me')).body.user.avatarUrl;
+    const got = await fetch(srv.base + url, { headers: { Cookie: me.client.cookie } });
+    assert.equal(got.status, 200, 'and is still readable with a key now configured');
+    assert.ok(Buffer.from(await got.arrayBuffer()).equals(png));
   });
 });
 

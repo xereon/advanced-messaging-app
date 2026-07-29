@@ -319,6 +319,14 @@ export function migrate() {
     updated_at: 'INTEGER',
   });
 
+  // A keyed hash of the email, because an encrypted address cannot be looked up
+  // or kept unique: the ciphertext differs every time it is written. This column
+  // is what sign-in, password reset and the exact-address directory match use
+  // once encryption is on, and it carries the UNIQUE constraint that `email`
+  // can no longer enforce.
+  addColumns('users', { email_hmac: 'TEXT' });
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_hmac ON users(email_hmac)');
+
   // Profile photos live on disk like attachments; only the pointer is here.
   // avatar_updated_at is the cache-buster: without it a changed photo would sit
   // behind an immutable cache header until the browser felt like re-checking.
@@ -439,7 +447,7 @@ export function publicUser(row) {
     id: row.id,
     name: row.name,
     username: row.username || null,
-    email: row.email,
+    email: unseal(row.email),
     role: row.role,
     avatarColor: row.avatar_color,
     isGuest: !!row.is_guest,
@@ -459,12 +467,16 @@ export function publicUser(row) {
     // profile cards and conversation member lists, so including it would hand
     // every user a list of which accounts are worth attacking. The flag is
     // reported only on the self view, by selfUser below.
-    pronouns: row.pronouns || null,
-    title: row.title || null,
-    bio: row.bio || null,
+    // Free text somebody wrote about themselves, decrypted here — the one place
+    // every user row is read for a client. Names and usernames are deliberately
+    // NOT encrypted: both are searched by prefix, which ciphertext cannot
+    // support, and both are already visible to any signed-in account.
+    pronouns: unseal(row.pronouns) || null,
+    title: unseal(row.title) || null,
+    bio: unseal(row.bio) || null,
     timezone: row.timezone || null,
     statusEmoji: statusLive ? (row.status_emoji || null) : null,
-    statusText: statusLive ? (row.status_text || null) : null,
+    statusText: statusLive ? (unseal(row.status_text) || null) : null,
     statusUntil: statusLive ? (row.status_until || null) : null,
   };
 }

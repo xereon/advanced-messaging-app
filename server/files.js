@@ -4,13 +4,14 @@
 // client-supplied name, and only handed back to members of the conversation
 // they belong to.
 
-import { createWriteStream } from 'node:fs';
-import { mkdir, unlink } from 'node:fs/promises';
+import { createWriteStream, createReadStream } from 'node:fs';
+import { mkdir, unlink, readFile, writeFile, open as openFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 
 import { handle } from './db.js';
+import * as crypt from './crypt.js';
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;   // 10 MB
 export const MAX_FILES_PER_MESSAGE = 4;
@@ -134,6 +135,10 @@ export async function store(req, { userId, convoId, name, declaredMime }) {
       throw e;
     }
   }
+
+  // Encrypted only now: the sniffer and the virus scanner above both have to see
+  // the real bytes, and a scanner handed ciphertext would pass everything.
+  await sealFileInPlace(path);
 
   // Trust the sniffed type over the client's claim; fall back to a download.
   const sniffed = sniffMime(head);
@@ -290,6 +295,8 @@ export async function storeAvatar(req, { userId }) {
     await fail(422, 'That file was rejected by the virus scanner.');
   }
 
+  await sealFileInPlace(path);
+
   const previous = handle().prepare('SELECT avatar_path FROM users WHERE id = ?').get(userId)?.avatar_path;
   handle().prepare(
     'UPDATE users SET avatar_path = ?, avatar_mime = ?, avatar_updated_at = ? WHERE id = ?',
@@ -315,4 +322,49 @@ export function findAvatar(userId) {
   ).get(userId);
   if (!row?.avatar_path) return null;
   return { path: row.avatar_path, mime: row.avatar_mime, updatedAt: row.avatar_updated_at };
+}
+
+
+/* ---------- encrypting what is on disk ---------- */
+
+/**
+ * Rewrite a stored file encrypted, if a key is configured.
+ *
+ * A no-op otherwise, so an existing deployment keeps plain files and nothing
+ * about its behaviour changes. Called after validation on purpose: the type
+ * sniffer and the virus scanner both have to see the real bytes, and a scanner
+ * handed ciphertext would wave everything through.
+ */
+export async function sealFileInPlace(path) {
+  if (!crypt.isEnabled()) return false;
+  const plain = await readFile(path);
+  if (crypt.isSealedFile(plain)) return false;
+  await writeFile(path, crypt.sealBytes(plain));
+  return true;
+}
+
+/**
+ * Hand back a stored file for serving, decrypting it if it needs it.
+ *
+ * Returns either a stream (for a plain file — no reason to buffer megabytes that
+ * need nothing done to them) or a Buffer (for an encrypted one, so GCM's tag is
+ * checked before a byte reaches the client). Both forms coexist, so a database
+ * part-way through the migration serves either.
+ */
+export async function openForServe(path) {
+  if (!crypt.isEnabled()) return { stream: createReadStream(path) };
+
+  // One small read to decide, rather than buffering every file on the chance it
+  // might be encrypted.
+  const fh = await openFile(path, 'r');
+  try {
+    const head = Buffer.alloc(crypt.FILE_HEADER_BYTES);
+    const { bytesRead } = await fh.read(head, 0, head.length, 0);
+    if (!crypt.isSealedFile(head.subarray(0, bytesRead))) {
+      return { stream: createReadStream(path) };
+    }
+  } finally {
+    await fh.close();
+  }
+  return { buffer: crypt.openBytes(await readFile(path)) };
 }

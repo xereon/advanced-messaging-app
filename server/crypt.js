@@ -17,7 +17,7 @@
 // while making that failure mode universal, so the operator has to choose it,
 // and `npm run encrypt` tells them what they are choosing.
 
-import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac } from 'node:crypto';
 
 // A version marker, so a database can hold both forms at once. That is what
 // makes the migration restartable and a half-converted database readable
@@ -116,4 +116,75 @@ export function open(stored) {
   } catch {
     return '[could not be decrypted]';
   }
+}
+
+/* ---------- files on disk ---------- */
+
+// Uploaded files get a magic header instead of the text marker, because a file
+// is bytes rather than a string and there is nothing to strip control characters
+// from. Same shape otherwise: a version tag, then IV, tag and ciphertext.
+const FILE_MAGIC = Buffer.from('RELAYENC1');
+
+/** Does this file begin with our header? Answered from the bytes, as with text. */
+export const isSealedFile = (head) =>
+  Buffer.isBuffer(head) && head.length >= FILE_MAGIC.length && head.subarray(0, FILE_MAGIC.length).equals(FILE_MAGIC);
+
+export const FILE_HEADER_BYTES = FILE_MAGIC.length + IV_BYTES + TAG_BYTES;
+
+/**
+ * Encrypt a whole file's bytes.
+ *
+ * Whole-file rather than streaming, deliberately. GCM only authenticates at the
+ * very end, so a streaming decrypt has to emit plaintext before it knows the
+ * bytes are genuine — fine for a huge archive, wrong for something served into a
+ * browser. Uploads are capped at 10 MB, so buffering is affordable and lets the
+ * tag be checked before a single byte reaches the client.
+ */
+export function sealBytes(buf) {
+  if (!key) return buf;
+  if (isSealedFile(buf)) return buf;
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const body = Buffer.concat([cipher.update(buf), cipher.final()]);
+  return Buffer.concat([FILE_MAGIC, iv, cipher.getAuthTag(), body]);
+}
+
+/**
+ * Decrypt a file's bytes, passing an unencrypted file through untouched.
+ *
+ * Throws rather than returning a placeholder: half an image is not a degraded
+ * image, it is a broken download, and the caller needs to answer with an error
+ * status instead of serving nonsense.
+ */
+export function openBytes(buf) {
+  if (!isSealedFile(buf)) return buf;
+  if (!key) {
+    const err = new Error('This file is encrypted and no key is configured.');
+    err.status = 500;
+    throw err;
+  }
+  const iv = buf.subarray(FILE_MAGIC.length, FILE_MAGIC.length + IV_BYTES);
+  const tag = buf.subarray(FILE_MAGIC.length + IV_BYTES, FILE_HEADER_BYTES);
+  const decipher = createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(buf.subarray(FILE_HEADER_BYTES)), decipher.final()]);
+}
+
+/* ---------- deterministic lookup ---------- */
+
+/**
+ * A keyed hash of a value, for columns that have to be *found* rather than read.
+ *
+ * An email address is the case that forces this. Encrypting it gives a different
+ * ciphertext every time, so `WHERE email = ?` can never match and the UNIQUE
+ * constraint stops preventing duplicates. A keyed hash is stable, so it can be
+ * indexed, matched and made unique — while still telling somebody holding the
+ * database file nothing, because reversing it needs the key.
+ *
+ * Deliberately not a bare SHA-256: the space of real email addresses is small
+ * enough to enumerate, so an unkeyed digest of one is barely a secret at all.
+ */
+export function lookupHash(value) {
+  if (!key || value === null || value === undefined || value === '') return null;
+  return createHmac('sha256', key).update(String(value)).digest('hex');
 }

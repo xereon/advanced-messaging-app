@@ -20,6 +20,8 @@ import { userInfo, hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import * as db from '../server/db.js';
+import * as crypt from '../server/crypt.js';
+import * as auth from '../server/auth.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DB_FILE = process.env.RELAY_DB || join(ROOT, 'data', 'relay.db');
@@ -32,6 +34,7 @@ const flag = (name) => {
 
 const die = (message) => { console.error(message); process.exit(1); };
 
+crypt.configure();
 db.open(DB_FILE);
 const handle = db.handle();
 
@@ -52,7 +55,8 @@ if (grant && revoke) die('Pass one of --grant or --revoke, not both.');
 
 if (grant || revoke) {
   const email = String(grant || revoke).trim().toLowerCase();
-  const user = handle.prepare('SELECT id, name, email, is_guest, is_admin FROM users WHERE email = ?').get(email);
+  // findByEmail, not a literal compare: an encrypted address never matches one.
+  const user = auth.findByEmail(email);
   if (!user) die(`No account with the email ${email}.`);
 
   // A guest session is handed to anyone who asks for one; it must never carry
@@ -95,7 +99,7 @@ if (!admins.length) {
 } else {
   console.log(`${admins.length} administrator${admins.length === 1 ? '' : 's'}:\n`);
   for (const a of admins) {
-    console.log(`  ${a.name}  @${a.username || '?'}  <${a.email}>`);
+    console.log(`  ${a.name}  @${a.username || '?'}  <${crypt.open(a.email)}>`);
   }
   console.log('\nRevoke with:  npm run admin -- --revoke someone@example.com');
 }

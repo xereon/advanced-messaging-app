@@ -111,21 +111,32 @@ const publicCredential = (row) => ({
  * real Content-Type; everything else is forced to a download so nothing a user
  * uploaded can execute in the origin. A restrictive CSP backs that up.
  */
-function streamAttachment(req, res, row, forceDownload) {
+async function streamAttachment(req, res, row, forceDownload) {
   const inline = files.isInlineImage(row.mime) && !forceDownload;
   const disposition = inline ? 'inline' : 'attachment';
   const asciiName = row.name.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '');
-  const stream = createReadStream(row.path);
-  stream.on('error', () => { if (!res.headersSent) fail(res, 404, 'File is missing.'); else res.destroy(); });
+
+  // Either a stream (plain file) or a decrypted Buffer. Content-Length comes from
+  // the row, not from the file on disk: an encrypted file is 37 bytes larger than
+  // what the client should receive.
+  let source;
+  try {
+    source = await files.openForServe(row.path);
+  } catch (err) {
+    return fail(res, err.status || 404, err.status ? err.message : 'File is missing.');
+  }
+
   res.writeHead(200, {
     'Content-Type': inline ? row.mime : 'application/octet-stream',
-    'Content-Length': row.size,
+    'Content-Length': source.buffer ? source.buffer.length : row.size,
     'Content-Disposition': `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(row.name)}`,
     'Content-Security-Policy': "default-src 'none'; sandbox",
     'X-Content-Type-Options': 'nosniff',
     'Cache-Control': 'private, max-age=31536000, immutable',
   });
-  stream.pipe(res);
+  if (source.buffer) return res.end(source.buffer);
+  source.stream.on('error', () => { if (!res.headersSent) fail(res, 404, 'File is missing.'); else res.destroy(); });
+  return source.stream.pipe(res);
 }
 
 /* ---------- static ---------- */
@@ -814,10 +825,17 @@ async function handleApi(req, res, url) {
     need();
     const found = files.findAvatar(decodeURIComponent(m[1]));
     if (!found) return fail(res, 404, 'No photo.');
-    const stream = createReadStream(found.path);
-    stream.on('error', () => {
-      if (!res.headersSent) fail(res, 404, 'No photo.'); else res.destroy();
-    });
+    let source;
+    try {
+      source = await files.openForServe(found.path);
+    } catch {
+      return fail(res, 500, 'That photo could not be read.');
+    }
+    if (source.stream) {
+      source.stream.on('error', () => {
+        if (!res.headersSent) fail(res, 404, 'No photo.'); else res.destroy();
+      });
+    }
     res.writeHead(200, {
       'Content-Type': found.mime,
       // The URL carries ?v=<updated_at>, so a given URL really is immutable and
@@ -826,7 +844,8 @@ async function handleApi(req, res, url) {
       'Content-Security-Policy': "default-src 'none'; sandbox",
       'X-Content-Type-Options': 'nosniff',
     });
-    return stream.pipe(res);
+    if (source.buffer) return res.end(source.buffer);
+    return source.stream.pipe(res);
   }
 
   if (path === '/contacts' && method === 'POST') return send(res, 200, api.addContact(need(), body.contactId));
@@ -917,8 +936,10 @@ export async function start({ port = PORT, dbFile = DB_FILE, uploadDir = UPLOAD_
   // are readable without inventing a separate admin account system.
   if (process.env.RELAY_ADMIN_EMAIL) {
     try {
-      db.handle().prepare('UPDATE users SET is_admin = 1 WHERE email = ?')
-        .run(String(process.env.RELAY_ADMIN_EMAIL).trim().toLowerCase());
+      // Through findByEmail, so this still works once addresses are encrypted:
+      // a literal compare would silently stop matching anybody.
+      const target = auth.findByEmail(process.env.RELAY_ADMIN_EMAIL);
+      if (target) db.handle().prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(target.id);
     } catch { /* the account may not exist yet; it will on next boot */ }
   }
   auth.pruneExpiredSessions();

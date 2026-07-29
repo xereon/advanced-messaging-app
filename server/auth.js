@@ -11,6 +11,7 @@ import {
 import { promisify } from 'node:util';
 import { handle, tx, publicUser, allocateUsername, isSuspended, suspensionOf } from './db.js';
 import { slugifyUsername } from './username.js';
+import * as crypt from './crypt.js';
 
 const scrypt = promisify(scryptCb);
 
@@ -119,8 +120,31 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 export const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
+/**
+ * Find an account by email address — the chokepoint every sign-in path uses.
+ *
+ * With encryption on, `email` holds ciphertext that differs on every write, so
+ * `WHERE email = ?` can never match; the keyed hash is the only way in. The
+ * plaintext lookup is kept as a fallback so a database part-way through
+ * `npm run encrypt` still lets everybody sign in — and so that the default,
+ * unencrypted deployment behaves exactly as it always did.
+ */
 export function findByEmail(email) {
-  return handle().prepare('SELECT * FROM users WHERE email = ?').get(normalizeEmail(email)) || null;
+  const clean = normalizeEmail(email);
+  const db = handle();
+
+  const hmac = crypt.lookupHash(clean);
+  if (hmac) {
+    const byHash = db.prepare('SELECT * FROM users WHERE email_hmac = ?').get(hmac);
+    if (byHash) return byHash;
+  }
+  return db.prepare('SELECT * FROM users WHERE email = ?').get(clean) || null;
+}
+
+/** The pair of values an email column needs: sealed for reading, hashed for finding. */
+export function emailColumns(email) {
+  const clean = normalizeEmail(email);
+  return { email: crypt.seal(clean), emailHmac: crypt.lookupHash(clean) };
 }
 
 export function findById(id) {
@@ -147,9 +171,11 @@ export async function createAccount({ name, email, password }) {
   // during sign-up is a second thing to get right before you can start, and an
   // account without one cannot be found by the search that expects it.
   const username = allocateUsername(slugifyUsername(user.name));
-  db.prepare(`INSERT INTO users (id, name, username, email, pw_hash, pw_salt, avatar_color, created_at, last_seen)
-              VALUES (?,?,?,?,?,?,?,?,0)`)
-    .run(user.id, user.name, username, user.email, pwHash, salt, user.avatar_color, user.created_at);
+  const cols = emailColumns(user.email);
+  db.prepare(`INSERT INTO users (id, name, username, email, email_hmac, pw_hash, pw_salt, avatar_color, created_at, last_seen)
+              VALUES (?,?,?,?,?,?,?,?,?,0)`)
+    .run(user.id, user.name, username, cols.email, cols.emailHmac,
+      pwHash, salt, user.avatar_color, user.created_at);
   return findById(user.id);
 }
 
@@ -185,6 +211,9 @@ export { GUEST_TTL_MS, SESSION_TTL_MS, publicUser };
 
 /* ---------- one-time login codes ---------- */
 
+/** Codes are keyed by the same keyed hash, so no address sits in these tables. */
+const codeKey = (email) => crypt.lookupHash(normalizeEmail(email)) || normalizeEmail(email);
+
 export async function issueLoginCode(email) {
   const clean = normalizeEmail(email);
   const user = findByEmail(clean);
@@ -199,30 +228,30 @@ export async function issueLoginCode(email) {
     `INSERT INTO login_codes (email, code_hash, expires_at, attempts) VALUES (?,?,?,0)
      ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash,
        expires_at = excluded.expires_at, attempts = 0`,
-  ).run(clean, `${salt}:${codeHash}`, Date.now() + CODE_TTL_MS);
+  ).run(codeKey(clean), `${salt}:${codeHash}`, Date.now() + CODE_TTL_MS);
   return { code, user };
 }
 
 export async function redeemLoginCode(email, code) {
   const db = handle();
   const clean = normalizeEmail(email);
-  const row = db.prepare('SELECT * FROM login_codes WHERE email = ?').get(clean);
+  const row = db.prepare('SELECT * FROM login_codes WHERE email = ?').get(codeKey(clean));
   const fail = (msg, status = 400) => { const e = new Error(msg); e.status = status; throw e; };
   if (!row) fail('Request a code first.');
   if (row.expires_at < Date.now()) {
-    db.prepare('DELETE FROM login_codes WHERE email = ?').run(clean);
+    db.prepare('DELETE FROM login_codes WHERE email = ?').run(codeKey(clean));
     fail('That code expired. Request a new one.');
   }
   if (row.attempts >= MAX_CODE_ATTEMPTS) {
-    db.prepare('DELETE FROM login_codes WHERE email = ?').run(clean);
+    db.prepare('DELETE FROM login_codes WHERE email = ?').run(codeKey(clean));
     fail('Too many incorrect attempts. Request a new code.', 429);
   }
   const [salt, expected] = row.code_hash.split(':');
   if (!(await verifySecret(String(code).trim(), salt, expected))) {
-    db.prepare('UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?').run(clean);
+    db.prepare('UPDATE login_codes SET attempts = attempts + 1 WHERE email = ?').run(codeKey(clean));
     fail('That code is not right.');
   }
-  db.prepare('DELETE FROM login_codes WHERE email = ?').run(clean);
+  db.prepare('DELETE FROM login_codes WHERE email = ?').run(codeKey(clean));
   return findByEmail(clean);
 }
 
@@ -244,37 +273,37 @@ export async function issueResetCode(email) {
     `INSERT INTO reset_codes (email, code_hash, expires_at, attempts) VALUES (?,?,?,0)
      ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash,
        expires_at = excluded.expires_at, attempts = 0`,
-  ).run(clean, `${salt}:${hash}`, Date.now() + CODE_TTL_MS);
+  ).run(codeKey(clean), `${salt}:${hash}`, Date.now() + CODE_TTL_MS);
   return { code, user };
 }
 
 export async function redeemResetCode(email, code, newPassword) {
   const db = handle();
   const clean = normalizeEmail(email);
-  const row = db.prepare('SELECT * FROM reset_codes WHERE email = ?').get(clean);
+  const row = db.prepare('SELECT * FROM reset_codes WHERE email = ?').get(codeKey(clean));
   const fail = (msg, status = 400) => { const e = new Error(msg); e.status = status; throw e; };
 
   if (!row) fail('Request a reset code first.');
   if (row.expires_at < Date.now()) {
-    db.prepare('DELETE FROM reset_codes WHERE email = ?').run(clean);
+    db.prepare('DELETE FROM reset_codes WHERE email = ?').run(codeKey(clean));
     fail('That code expired. Request a new one.');
   }
   if (row.attempts >= MAX_CODE_ATTEMPTS) {
-    db.prepare('DELETE FROM reset_codes WHERE email = ?').run(clean);
+    db.prepare('DELETE FROM reset_codes WHERE email = ?').run(codeKey(clean));
     fail('Too many incorrect attempts. Request a new code.', 429);
   }
   if (String(newPassword || '').length < 8) fail('Password must be at least 8 characters.');
 
   const [salt, expected] = row.code_hash.split(':');
   if (!(await verifySecret(String(code).trim(), salt, expected))) {
-    db.prepare('UPDATE reset_codes SET attempts = attempts + 1 WHERE email = ?').run(clean);
+    db.prepare('UPDATE reset_codes SET attempts = attempts + 1 WHERE email = ?').run(codeKey(clean));
     fail('That code is not right.');
   }
 
   const user = findByEmail(clean);
   const next = await makeSecret(newPassword);
   db.prepare('UPDATE users SET pw_hash = ?, pw_salt = ? WHERE id = ?').run(next.hash, next.salt, user.id);
-  db.prepare('DELETE FROM reset_codes WHERE email = ?').run(clean);
+  db.prepare('DELETE FROM reset_codes WHERE email = ?').run(codeKey(clean));
   // Whoever was signed in with the old password no longer is.
   destroyAllSessions(user.id);
   return findById(user.id);

@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 402 tests
+npm test     # 410 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -165,7 +165,7 @@ Schedule it with cron: `15 3 * * * /srv/relay/deploy/backup.sh /var/backups/rela
 | `RELAY_ORIGIN` | unset | Extra allowed WebAuthn origin, if the public origin differs from `Host` |
 | `RELAY_RATE_LIMIT` | on | Set to `off` to disable rate limiting (tests only) |
 | `RELAY_SCAN_COMMAND` | unset | External virus scanner for uploads; a non-zero exit rejects the file |
-| `RELAY_ENCRYPTION_KEY` | unset | 32-byte key (base64 or hex) that encrypts message bodies at rest. Generate with `npm run encrypt -- --key`, then run `npm run encrypt`. **Lose it and every encrypted message is gone** |
+| `RELAY_ENCRYPTION_KEY` | unset | 32-byte key (base64 or hex) that encrypts messages, profiles, email addresses and uploaded files at rest. Generate with `npm run encrypt -- --key`, then run `npm run encrypt`. **Lose it and the encrypted data is gone** |
 | `RELAY_ADMIN_EMAIL` | unset | Account marked administrator on boot, granting the moderation dashboard. `npm run admin` does the same from a shell |
 | `RELAY_VAPID_PUBLIC` / `RELAY_VAPID_PRIVATE` | generated | Web Push identity. Generated once and stored on first use; set these to pin it. Changing them invalidates every existing subscription |
 | `RELAY_VAPID_SUBJECT` | `mailto:admin@localhost` | Contact address push services can use to reach you |
@@ -284,10 +284,43 @@ npm run encrypt -- --key          # generates a key to put in the environment
 npm run encrypt                   # encrypts what is already there
 ```
 
-Message bodies, unsent drafts, reported-message snapshots, report notes,
-feedback and appeals are encrypted with **AES-256-GCM**, a fresh IV per value.
+Encrypted with **AES-256-GCM**, a fresh IV per value:
+
+| | |
+| --- | --- |
+| **Messages** | bodies, unsent drafts |
+| **Moderation** | reported-message snapshots, report notes, feedback, appeals |
+| **Profiles** | bio, status text, pronouns, job title |
+| **Email addresses** | plus a keyed hash for lookup — see below |
+| **Uploaded files** | attachments and profile photos, on disk |
+
 `npm run encrypt -- --status` counts what is stored which way, and `--off`
 converts back.
+
+**Two things are deliberately left readable: display names and usernames.** Both
+are matched by prefix in people search, which ciphertext cannot support, and both
+are already shown to any signed-in account — so encrypting them would cost a
+working feature to hide something the app displays anyway. If that trade is wrong
+for your deployment, the honest fix is to remove people search, not to encrypt
+around it.
+
+**Email addresses need a keyed hash to go with them.** An encrypted address is
+different bytes every time it is written, so `WHERE email = ?` can never match
+and the `UNIQUE` constraint stops preventing duplicate accounts. Alongside the
+ciphertext, `users.email_hmac` holds an HMAC-SHA256 of the address under the same
+key: stable enough to index, match and enforce uniqueness, and useless to
+somebody holding the file, because reversing it needs the key. Not a bare
+SHA-256 — the space of real addresses is small enough to enumerate, so an unkeyed
+digest of one is barely a secret. One-time sign-in and reset codes are keyed by
+the same hash, so no address sits in those tables either.
+
+**Uploaded files are encrypted whole, not streamed.** GCM only authenticates at
+the very end, so a streaming decrypt has to emit plaintext before it knows the
+bytes are genuine — acceptable for a huge archive, wrong for something being
+painted into a browser. Uploads are capped at 10 MB, so buffering is affordable
+and the tag is verified before a single byte is sent. Encryption happens *after*
+the type sniffer and the virus scanner have seen the real bytes; a scanner handed
+ciphertext would wave everything through.
 
 **What this protects against, precisely:** somebody who obtains the database
 file but not the server — a copied backup, a misconfigured document root serving
@@ -301,7 +334,10 @@ Three details worth knowing, each of which was a bug first:
   worker processes can pick them up, and a message event carries the body —
   encrypting `messages.text` while writing the same words there as plain JSON
   left them in the file anyway. A grep of a real database is what found it, and a
-  test now greps the `events` table for a canary.
+  test now greps the `events` table for a canary. The migration *clears* any bus
+  rows written before it ran, rather than converting them: they are transient by
+  design, and a second grep after migrating an existing database is what caught
+  that they were being left behind.
 - **`PRAGMA secure_delete` is on, and the migration ends with `VACUUM`.**
   Rewriting a row leaves the old bytes in a free page, so without this the
   plaintext the migration replaced stayed readable in the file.
@@ -675,10 +711,9 @@ knowingly.
   entirely and needs cross-device key management and key verification. Saying
   "encrypted" and meaning at-rest would be the dishonest version, so the section
   above spells out which one this is.
-- **Attachment files are not encrypted.** They live outside the database, and
-  the key would have to be applied to a byte-range read to keep inline images
-  and resumable downloads working. Protect `data/uploads/` with filesystem
-  permissions; the encryption setting does not cover it and does not claim to.
+- **Display names and usernames stay readable**, even with encryption on. The
+  reasoning is under Encryption at rest above: prefix search cannot work on
+  ciphertext, and both are already visible to every signed-in account.
 - **Attestation is not validated.** Registration uses `attestation: 'none'`, so
   Relay verifies possession of the passkey but does not attest which
   authenticator model produced it — which is what almost every service does.
