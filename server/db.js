@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { USERNAME_MAX, slugifyUsername, usernameProblem } from './username.js';
+import { seal, open as unseal } from './crypt.js';
 
 let db = null;
 
@@ -15,6 +16,11 @@ export function open(file) {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
+  // Overwrite deleted content instead of leaving it in free pages. Without it,
+  // a deleted message — or a row the encryption migration rewrote — stays
+  // readable in the file until something happens to reuse the page, which
+  // undoes much of the point of encrypting at rest.
+  db.exec('PRAGMA secure_delete = ON');
   migrate();
   return db;
 }
@@ -481,7 +487,9 @@ export function shapeMessage(row, reactions = {}) {
     id: row.id,
     convoId: row.convo_id,
     from: row.from_id,
-    text: row.deleted_at ? '' : row.text,
+    // Decrypted here, which is the single place every message body is read for
+    // a client. A row stored in plaintext passes through untouched.
+    text: row.deleted_at ? '' : unseal(row.text),
     at: row.at,
     seq: row.seq,
     replyTo: row.reply_to || undefined,

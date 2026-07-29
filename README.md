@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 335 tests
+npm test     # 361 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -165,6 +165,7 @@ Schedule it with cron: `15 3 * * * /srv/relay/deploy/backup.sh /var/backups/rela
 | `RELAY_ORIGIN` | unset | Extra allowed WebAuthn origin, if the public origin differs from `Host` |
 | `RELAY_RATE_LIMIT` | on | Set to `off` to disable rate limiting (tests only) |
 | `RELAY_SCAN_COMMAND` | unset | External virus scanner for uploads; a non-zero exit rejects the file |
+| `RELAY_ENCRYPTION_KEY` | unset | 32-byte key (base64 or hex) that encrypts message bodies at rest. Generate with `npm run encrypt -- --key`, then run `npm run encrypt`. **Lose it and every encrypted message is gone** |
 | `RELAY_ADMIN_EMAIL` | unset | Account marked administrator on boot, granting the moderation dashboard. `npm run admin` does the same from a shell |
 | `RELAY_VAPID_PUBLIC` / `RELAY_VAPID_PRIVATE` | generated | Web Push identity. Generated once and stored on first use; set these to pin it. Changing them invalidates every existing subscription |
 | `RELAY_VAPID_SUBJECT` | `mailto:admin@localhost` | Contact address push services can use to reach you |
@@ -273,6 +274,52 @@ long outage the client pulls a fresh snapshot instead.
   Auth responses send `Cache-Control: no-store`, the whole app sends
   `Referrer-Policy: no-referrer`, and the 500 handler logs the path only, never
   the query string.
+
+### Encryption at rest
+
+Off by default, on with one setting:
+
+```bash
+npm run encrypt -- --key          # generates a key to put in the environment
+npm run encrypt                   # encrypts what is already there
+```
+
+Message bodies, unsent drafts, reported-message snapshots, report notes,
+feedback and appeals are encrypted with **AES-256-GCM**, a fresh IV per value.
+`npm run encrypt -- --status` counts what is stored which way, and `--off`
+converts back.
+
+**What this protects against, precisely:** somebody who obtains the database
+file but not the server — a copied backup, a misconfigured document root serving
+`data/relay.db`, a decommissioned disk. **What it does not:** anyone who can run
+code on the server or read its environment has the key by definition. It is not
+end-to-end encryption and the code says so where you would look for it.
+
+Three details worth knowing, each of which was a bug first:
+
+- **The event bus is covered too.** Published events are persisted so other
+  worker processes can pick them up, and a message event carries the body —
+  encrypting `messages.text` while writing the same words there as plain JSON
+  left them in the file anyway. A grep of a real database is what found it, and a
+  test now greps the `events` table for a canary.
+- **`PRAGMA secure_delete` is on, and the migration ends with `VACUUM`.**
+  Rewriting a row leaves the old bytes in a free page, so without this the
+  plaintext the migration replaced stayed readable in the file.
+- **The marker that distinguishes encrypted values from plaintext starts with a
+  control character**, and every text input strips control characters — so it is
+  a marker no user can forge. A printable marker meant a message beginning with
+  it was stored unencrypted and then read back as undecryptable. It is not NUL,
+  which was the obvious pick: `node:sqlite` truncates a string at the first NUL,
+  which would have silently emptied every message.
+
+Existing plaintext rows keep working, since the marker is per value — a
+half-finished migration is readable rather than half-broken, and re-running it
+is a no-op. Search still works with encryption on, by decrypting the most recent
+5,000 messages and matching in memory rather than in SQL; that is slower than the
+index it replaces, and bounded so it cannot be made to run indefinitely.
+
+**If you lose the key, the messages are gone.** There is no recovery path, which
+is the same property that makes a copied database file useless.
 
 ## Sign-in options
 
@@ -540,26 +587,33 @@ focus.
 
 Settings are stored on your account, so they follow you between devices.
 
-## Known gaps
+## Deliberate limits
 
-Worth naming rather than hiding:
+Not gaps — decisions, with the reasoning, so you can disagree with them
+knowingly.
 
+- **No end-to-end encryption.** At-rest encryption protects the database file;
+  the server still decrypts in order to render and to search. Real end-to-end
+  encryption is a different product: it would remove server-side message search
+  entirely and needs cross-device key management and key verification. Saying
+  "encrypted" and meaning at-rest would be the dishonest version, so the section
+  above spells out which one this is.
+- **Attachment files are not encrypted.** They live outside the database, and
+  the key would have to be applied to a byte-range read to keep inline images
+  and resumable downloads working. Protect `data/uploads/` with filesystem
+  permissions; the encryption setting does not cover it and does not claim to.
 - **Attestation is not validated.** Registration uses `attestation: 'none'`, so
-  Relay verifies possession of the key but does not attest which authenticator
-  model produced it. This is a deliberate choice, not an omission — it is what
-  most services do, and validating attestation only buys something if you intend
-  to allow-list specific hardware. That would need certificate-chain parsing per
-  attestation format.
-- **No virus scanner ships.** Bundling one would end the no-dependencies
+  Relay verifies possession of the passkey but does not attest which
+  authenticator model produced it — which is what almost every service does.
+  Validating it only buys something if you intend to allow-list specific
+  hardware, and would need certificate-chain parsing per attestation format.
+- **No virus scanner is bundled.** Shipping one would end the no-dependencies
   promise, so `RELAY_SCAN_COMMAND` is a hook: point it at `clamscan` and a
-  non-zero exit rejects the upload. Relay now *says so on start* when it is
-  unset, rather than leaving a documented setting nobody knows to look for.
-  Uploads are always served inertly regardless — sniffed type, forced download
-  for anything but a short image allow-list, and a `sandbox` CSP.
-- **Messages are stored in plaintext.** Encrypting bodies at rest is
-  straightforward and worth doing; true end-to-end encryption is a different
-  product — it would break server-side search and needs cross-device key
-  management.
-- **One database.** SQLite with WAL handles a busy small deployment comfortably,
-  and the event bus and presence now work across worker processes, but nothing
-  here shards or replicates.
+  non-zero exit rejects the upload. Relay says so on start when it is unset
+  rather than leaving a documented setting nobody looks for. Uploads are served
+  inertly either way — sniffed type, forced download for anything but a short
+  image allow-list, and a `sandbox` CSP.
+- **One SQLite database.** WAL handles a busy small deployment comfortably, and
+  presence and the event bus work across worker processes, but nothing here
+  shards or replicates. That ceiling is the price of "clone it and start it";
+  past it, you want a different storage layer, not a patch to this one.

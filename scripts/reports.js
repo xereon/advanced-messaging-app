@@ -12,6 +12,7 @@
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as db from '../server/db.js';
+import * as crypt from '../server/crypt.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DB_FILE = process.env.RELAY_DB || join(ROOT, 'data', 'relay.db');
@@ -22,6 +23,7 @@ const flag = (name, fallback = null) => {
   return i === -1 ? fallback : args[i + 1];
 };
 
+crypt.configure();
 db.open(DB_FILE);
 
 const resolveId = flag('resolve');
@@ -65,8 +67,8 @@ for (const r of rows) {
   console.log(`    ${r.reporter_name || 'a deleted account'} reported ${r.subject_name || 'a deleted account'}`
     + `${r.subject_email ? ` <${r.subject_email}>` : ''}`);
   console.log(`    reason: ${r.reason}`);
-  if (r.note) console.log(`    note:   ${r.note}`);
-  if (r.message_text) console.log(`    quoted: ${JSON.stringify(r.message_text.slice(0, 160))}`);
+  if (r.note) console.log(`    note:   ${crypt.open(r.note)}`);
+  if (r.message_text) console.log(`    quoted: ${JSON.stringify(crypt.open(r.message_text).slice(0, 160))}`);
   console.log('');
 }
 console.log('Resolve one with:  npm run reports -- --resolve <id> --status actioned');

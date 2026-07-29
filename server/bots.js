@@ -5,6 +5,7 @@ import { handle, tx, nextSeq, shapeMessage, allocateUsername } from './db.js';
 import { uid } from './auth.js';
 import * as rt from './realtime.js';
 import { slugifyUsername } from './username.js';
+import { seal } from './crypt.js';
 
 export const BOTS = [
   { id: 'u-bot-ava', name: 'Ava Chen', role: 'Product Manager', color: '#7C4DDB',
@@ -82,7 +83,7 @@ export function seedConversationsFor(userId, displayName) {
       m.run(id, userId); m.run(id, botId);
       db.prepare(
         `INSERT INTO messages (id, convo_id, from_id, text, at, seq, delivered_at) VALUES (?,?,?,?,?,?,?)`,
-      ).run(uid('m'), id, botId, text, now - offset, nextSeq(), now - offset);
+      ).run(uid('m'), id, botId, seal(text), now - offset, nextSeq(), now - offset);
     });
   };
 
@@ -98,7 +99,9 @@ export function seedConversationsFor(userId, displayName) {
       for (const id of [userId, 'u-bot-ava', 'u-bot-leo']) m.run(groupId, id);
       db.prepare(
         `INSERT INTO messages (id, convo_id, from_id, text, at, seq, delivered_at) VALUES (?,?,?,?,?,?,?)`,
-      ).run(uid('m'), groupId, 'u-bot-leo', 'Design tokens for Aurora are in. Accessibility pass is done — all AA. 🚀', now - 30000, nextSeq(), now - 30000);
+      ).run(uid('m'), groupId, 'u-bot-leo',
+        seal('Design tokens for Aurora are in. Accessibility pass is done — all AA. 🚀'),
+        now - 30000, nextSeq(), now - 30000);
     });
   }
 }
@@ -177,7 +180,7 @@ export function scheduleBotReply(convoId, msg) {
     const row = tx(() => {
       db.prepare(
         `INSERT INTO messages (id, convo_id, from_id, text, at, seq, delivered_at) VALUES (?,?,?,?,?,?,?)`,
-      ).run(id, convoId, responder.id, text, now, nextSeq(), now);
+      ).run(id, convoId, responder.id, seal(text), now, nextSeq(), now);
       db.prepare(
         `INSERT INTO reads (convo_id, user_id, at) VALUES (?,?,?)
          ON CONFLICT(convo_id, user_id) DO UPDATE SET at = MAX(at, excluded.at)`,

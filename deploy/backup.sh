@@ -38,6 +38,17 @@ fi
 echo "Done:"
 ls -lh "$DEST" | grep "$STAMP" || true
 
+# A backup of an encrypted database is worthless without the key, and the key is
+# not in the backup — deliberately, since storing it alongside would defeat the
+# encryption. Say so, because "I have backups" and "I can restore" are different
+# claims once this is switched on.
+if [ -n "${RELAY_ENCRYPTION_KEY:-}" ]; then
+  echo
+  echo "NOTE: this database is encrypted at rest. Restoring it needs"
+  echo "RELAY_ENCRYPTION_KEY, which is not in this backup. Keep a copy of the key"
+  echo "somewhere other than this machine."
+fi
+
 # Keep the last 14 sets.
 find "$DEST" -name 'relay-*.db' -type f | sort | head -n -14 | xargs -r rm --
 find "$DEST" -name 'uploads-*.tar.gz' -type f | sort | head -n -14 | xargs -r rm --

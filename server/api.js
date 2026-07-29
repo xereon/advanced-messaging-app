@@ -12,6 +12,7 @@ import * as files from './files.js';
 import * as push from './push.js';
 import { normalizeUsername, usernameProblem } from './username.js';
 import { ADMIN_PATH } from './admin.js';
+import * as crypt from './crypt.js';
 
 const MAX_TEXT = 4000;
 const HISTORY_LIMIT = 200;
@@ -20,6 +21,19 @@ export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 const bad = (msg) => { throw new HttpError(400, msg); };
+
+/** Read a stored text column, whether or not it happens to be encrypted. */
+const unsealText = (value) => crypt.open(value);
+
+/**
+ * Trim, and remove control characters other than newline and tab.
+ *
+ * Nothing in a message body needs a NUL or a bell, and stripping them is what
+ * lets the at-rest encryption marker start with NUL — a value no user can type
+ * is a marker no user can forge. Newlines and tabs are real formatting and stay.
+ */
+// eslint-disable-next-line no-control-regex
+const plainText = (value) => String(value ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim();
 
 /* ---------- helpers ---------- */
 
@@ -161,7 +175,7 @@ export function bootstrap(me) {
     const m = db.prepare('SELECT * FROM convo_meta WHERE user_id = ? AND convo_id = ?').get(me.id, row.id);
     meta[row.id] = {
       pinned: !!m?.pinned, muted: !!m?.muted,
-      draft: m?.draft || '', clearedBefore: m?.cleared_before || 0,
+      draft: unsealText(m?.draft) || '', clearedBefore: m?.cleared_before || 0,
     };
   }
 
@@ -419,7 +433,9 @@ export function submitReport(me, { subjectId, convoId, messageId, reason, note }
     const row = handle().prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
     if (row) {
       assertMember(row.convo_id, me.id);
-      messageText = row.text;
+      // The row may already be encrypted; the snapshot stores the readable text
+      // and is then sealed like everything else.
+      messageText = unsealText(row.text);
     }
   }
 
@@ -428,8 +444,8 @@ export function submitReport(me, { subjectId, convoId, messageId, reason, note }
     `INSERT INTO reports (id, reporter_id, subject_id, convo_id, message_id, message_text,
                           reason, note, status, created_at)
      VALUES (?,?,?,?,?,?,?,?,'open',?)`,
-  ).run(id, me.id, subjectId, convoId || null, messageId || null, messageText,
-    reason, String(note || '').slice(0, 1000) || null, Date.now());
+  ).run(id, me.id, subjectId, convoId || null, messageId || null, crypt.seal(messageText),
+    reason, crypt.seal(plainText(note).slice(0, 1000) || null), Date.now());
 
   return { id, ok: true };
 }
@@ -462,7 +478,7 @@ export function submitAppeal({ user, message }) {
   // whether an address is suspended.
   if (!held) throw new HttpError(403, 'That account is not suspended.');
 
-  const text = String(message ?? '').trim().slice(0, MAX_APPEAL);
+  const text = plainText(message).slice(0, MAX_APPEAL);
   if (!text) bad('Write a short note about why this should be looked at again.');
 
   const existing = handle().prepare(
@@ -475,7 +491,7 @@ export function submitAppeal({ user, message }) {
   handle().prepare(
     `INSERT INTO appeals (user_id, suspended_at, message, status, created_at)
      VALUES (?,?,?,'new',?)`,
-  ).run(user.id, held.at, text, Date.now());
+  ).run(user.id, held.at, crypt.seal(text), Date.now());
   return { ok: true };
 }
 
@@ -498,14 +514,14 @@ const MAX_FEEDBACK = 2000;
  */
 export function submitFeedback(me, { kind, message }) {
   if (!FEEDBACK_KINDS.has(kind)) bad('Choose what kind of feedback this is.');
-  const text = String(message ?? '').trim().slice(0, MAX_FEEDBACK);
+  const text = plainText(message).slice(0, MAX_FEEDBACK);
   if (!text) bad('Say a little about it first.');
 
   const id = auth.uid('fb');
   handle().prepare(
     `INSERT INTO feedback (id, author_id, author_name, kind, message, status, created_at)
      VALUES (?,?,?,?,?,'new',?)`,
-  ).run(id, me.id, me.name, kind, text, Date.now());
+  ).run(id, me.id, me.name, kind, crypt.seal(text), Date.now());
   return { id, ok: true };
 }
 
@@ -541,7 +557,7 @@ function systemMessage(convoId, actorId, text) {
     handle().prepare(
       `INSERT INTO messages (id, convo_id, from_id, text, at, seq, delivered_at, system)
        VALUES (?,?,?,?,?,?,?,1)`,
-    ).run(id, convoId, actorId, text, now, nextSeq(), now);
+    ).run(id, convoId, actorId, crypt.seal(text), now, nextSeq(), now);
     return handle().prepare('SELECT * FROM messages WHERE id = ?').get(id);
   });
   const msg = { ...shapeMessage(row), attachments: [] };
@@ -664,6 +680,9 @@ export function searchMessages(me, q, limit = 40) {
   // Searching for "a_b" must find that literal text, not "axb".
   const like = `%${likeLiteral(needle.toLowerCase())}%`;
 
+  // Everything except the text match. SQLite cannot match inside ciphertext, so
+  // when encryption is on the filter moves into JS and this stays the query.
+  const encrypted = crypt.isEnabled();
   const rows = handle().prepare(`
     SELECT m.*, c.type AS convo_type, c.title AS convo_title
       FROM messages m
@@ -673,13 +692,23 @@ export function searchMessages(me, q, limit = 40) {
      WHERE m.deleted_at IS NULL
        AND m.from_id NOT IN (SELECT blocked_id FROM blocks WHERE user_id = ?)
        AND m.from_id NOT IN (SELECT user_id FROM blocks WHERE blocked_id = ?)
-       AND LOWER(m.text) LIKE ? ESCAPE '\\'
+       ${encrypted ? '' : "AND LOWER(m.text) LIKE ? ESCAPE '\\'"}
        AND m.at > IFNULL(meta.cleared_before, 0)
      ORDER BY m.at DESC
-     LIMIT ?`).all(me.id, me.id, me.id, me.id, like, capped);
+     LIMIT ?`).all(
+    ...[me.id, me.id, me.id, me.id, ...(encrypted ? [] : [like]), encrypted ? SCAN_LIMIT : capped],
+  );
+
+  // With encryption on, this is a scan: decrypt newest-first and stop at the
+  // page. It costs more than an index and is bounded so it cannot become a way
+  // to make the server work indefinitely — the honest trade for a database that
+  // is unreadable without the key. Documented in the README next to the setting.
+  const matched = encrypted
+    ? rows.filter((r) => unsealText(r.text).toLowerCase().includes(needle.toLowerCase())).slice(0, capped)
+    : rows;
 
   return {
-    results: rows.map((r) => ({
+    results: matched.map((r) => ({
       ...shapeMessage(r),
       convoType: r.convo_type,
       convoTitle: r.convo_title,
@@ -687,12 +716,16 @@ export function searchMessages(me, q, limit = 40) {
   };
 }
 
+// How many recent messages a search will decrypt before giving up, when
+// encryption is on. Generous for a small deployment, finite for a large one.
+const SCAN_LIMIT = 5000;
+
 /* ---------- messages ---------- */
 
 export function sendMessage(me, convoId, { text, replyTo, clientId, attachmentIds = [] }) {
   assertMember(convoId, me.id);   // also closes a direct conversation with a block
 
-  const clean = String(text ?? '').trim();
+  const clean = plainText(text);
   const wanted = Array.isArray(attachmentIds) ? attachmentIds.filter((x) => typeof x === 'string') : [];
   if (!clean && !wanted.length) bad('Message is empty.');
   if (clean.length > MAX_TEXT) bad(`Messages are limited to ${MAX_TEXT} characters.`);
@@ -708,7 +741,7 @@ export function sendMessage(me, convoId, { text, replyTo, clientId, attachmentId
     handle().prepare(
       `INSERT INTO messages (id, convo_id, from_id, text, at, seq, reply_to, delivered_at)
        VALUES (?,?,?,?,?,?,?,?)`,
-    ).run(id, convoId, me.id, clean, now, seq, replyTo || null, now);
+    ).run(id, convoId, me.id, crypt.seal(clean), now, seq, replyTo || null, now);
     handle().prepare(
       `INSERT INTO reads (convo_id, user_id, at) VALUES (?,?,?)
        ON CONFLICT(convo_id, user_id) DO UPDATE SET at = excluded.at`,
@@ -732,10 +765,11 @@ export function sendMessage(me, convoId, { text, replyTo, clientId, attachmentId
 export function editMessage(me, msgId, text) {
   const row = ownMessage(msgId, me.id);
   if (row.deleted_at) bad('That message was deleted.');
-  const clean = String(text ?? '').trim();
+  const clean = plainText(text);
   if (!clean) bad('Message is empty.');
   if (clean.length > MAX_TEXT) bad(`Messages are limited to ${MAX_TEXT} characters.`);
-  handle().prepare('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?').run(clean, Date.now(), msgId);
+  handle().prepare('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?')
+    .run(crypt.seal(clean), Date.now(), msgId);
   const msg = {
     ...shapeMessage(handle().prepare('SELECT * FROM messages WHERE id = ?').get(msgId)),
     attachments: files.forMessages([msgId])[msgId] || [],
@@ -804,14 +838,15 @@ export function setMeta(me, convoId, patch) {
   const next = {
     pinned: patch.pinned ?? !!cur?.pinned,
     muted: patch.muted ?? !!cur?.muted,
-    draft: patch.draft ?? cur?.draft ?? '',
+    draft: patch.draft ?? unsealText(cur?.draft) ?? '',
     clearedBefore: patch.clearedBefore ?? cur?.cleared_before ?? 0,
   };
   db.prepare(
     `INSERT INTO convo_meta (user_id, convo_id, pinned, muted, draft, cleared_before) VALUES (?,?,?,?,?,?)
      ON CONFLICT(user_id, convo_id) DO UPDATE SET pinned = excluded.pinned, muted = excluded.muted,
        draft = excluded.draft, cleared_before = excluded.cleared_before`,
-  ).run(me.id, convoId, next.pinned ? 1 : 0, next.muted ? 1 : 0, String(next.draft).slice(0, MAX_TEXT), next.clearedBefore);
+  ).run(me.id, convoId, next.pinned ? 1 : 0, next.muted ? 1 : 0,
+    crypt.seal(plainText(next.draft).slice(0, MAX_TEXT)), next.clearedBefore);
   return next;
 }
 

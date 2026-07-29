@@ -33,6 +33,13 @@ Environment=RELAY_SECURE=1
 # Keep the password out of this file — see EnvironmentFile below.
 #EnvironmentFile=/etc/relay/secrets.env
 
+# Encryption at rest. Put the key in the EnvironmentFile above, not here: this
+# unit is world-readable, and a key stored beside the data it protects is not
+# protecting it. Generate one with `npm run encrypt -- --key`, then run
+# `npm run encrypt` once. Back the key up somewhere other than this machine —
+# without it, the messages are unrecoverable.
+#RELAY_ENCRYPTION_KEY=…   (in /etc/relay/secrets.env)
+
 Restart=on-failure
 RestartSec=5s
 

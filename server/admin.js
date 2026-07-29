@@ -14,6 +14,7 @@
 // already do.
 
 import { handle, suspensionOf } from './db.js';
+import { open as unseal } from './crypt.js';
 import * as auth from './auth.js';
 
 const REPORT_STATUSES = ['open', 'reviewed', 'actioned', 'dismissed'];
@@ -189,10 +190,10 @@ export function listReports(me, { status = 'open', limit = 100 } = {}) {
     reports: rows.map((r) => ({
       id: r.id,
       reason: r.reason,
-      note: r.note,
+      note: unseal(r.note),
       status: r.status,
       createdAt: r.created_at,
-      quotedMessage: r.message_text,
+      quotedMessage: unseal(r.message_text),
       inConversation: !!r.convo_id,
       reporter: r.reporter_id
         ? { id: r.reporter_id, name: r.reporter_name, username: r.reporter_username }
@@ -376,7 +377,7 @@ export function listAppeals(me, { status = 'new' } = {}) {
       name: r.name,
       username: r.username,
       email: r.email,
-      message: r.message,
+      message: unseal(r.message),
       status: r.status,
       createdAt: r.created_at,
       // An appeal against a suspension that has since been lifted or replaced is
@@ -435,7 +436,7 @@ export function listFeedback(me, { status = 'new', limit = 100 } = {}) {
     feedback: rows.map((r) => ({
       id: r.id,
       kind: r.kind,
-      message: r.message,
+      message: unseal(r.message),
       status: r.status,
       createdAt: r.created_at,
       // author_id goes null when the account is deleted; the name stays, so say

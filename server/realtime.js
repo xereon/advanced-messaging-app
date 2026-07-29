@@ -12,6 +12,7 @@
 // The in-process set is kept as a fast path for the worker that owns the stream.
 
 import { handle } from './db.js';
+import { seal, open as unseal } from './crypt.js';
 
 /** userId -> Set<res> */
 const streams = new Map();
@@ -35,12 +36,23 @@ let pruneCounter = 0;
 
 /* ---------- the shared bus ---------- */
 
+/**
+ * Append an event for the other workers to pick up.
+ *
+ * The payload is sealed like any other stored text. It has to be: a 'message'
+ * event carries the message body, so encrypting `messages.text` while writing
+ * the same words here as plain JSON would leave them in the file anyway — which
+ * is exactly what a grep of the database turned up.
+ */
 function insertEvent(type, data, audience) {
   const info = handle().prepare(
     'INSERT INTO events (type, data, audience, at) VALUES (?,?,?,?)',
-  ).run(type, JSON.stringify(data), JSON.stringify(audience), Date.now());
+  ).run(type, seal(JSON.stringify(data)), JSON.stringify(audience), Date.now());
   return Number(info.lastInsertRowid);
 }
+
+/** Read a stored event payload, sealed or not. */
+const eventData = (row) => JSON.parse(unseal(row.data));
 
 function deliverLocal(evt) {
   for (const userId of evt.audience) {
@@ -65,7 +77,7 @@ function drainBus() {
       deliverLocal({
         id: row.id,
         type: row.type,
-        data: JSON.parse(row.data),
+        data: eventData(row),
         audience: new Set(JSON.parse(row.audience)),
       });
     } catch { /* a malformed row must not stall the tail */ }
@@ -127,7 +139,7 @@ export function subscribe(userId, res, sinceId) {
       for (const row of rows) {
         const audience = JSON.parse(row.audience);
         if (!audience.includes(userId)) continue;
-        writeEvent(res, { id: row.id, type: row.type, data: JSON.parse(row.data) });
+        writeEvent(res, { id: row.id, type: row.type, data: eventData(row) });
       }
     } catch { /* replay is best effort */ }
   }

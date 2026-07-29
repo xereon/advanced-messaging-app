@@ -20,6 +20,7 @@ import * as files from './files.js';
 import * as mailer from './mailer.js';
 import * as push from './push.js';
 import * as admin from './admin.js';
+import * as crypt from './crypt.js';
 import {
   seedBots, seedConversationsFor, cancelBotTimers, demoBotsEnabled,
 } from './bots.js';
@@ -285,6 +286,10 @@ function reportPostureOnBoot() {
   }
   if (demoBotsEnabled()) {
     notes.push('Demo accounts are on. Set RELAY_DEMO_BOTS=0 for a real deployment.');
+  }
+  if (!crypt.isEnabled()) {
+    notes.push('Message bodies are stored in plaintext. Set RELAY_ENCRYPTION_KEY and run'
+      + ' npm run encrypt to make the database file unreadable on its own.');
   }
   if (!db.handle().prepare('SELECT 1 AS ok FROM users WHERE is_admin = 1').get()) {
     notes.push('No administrator, so abuse reports cannot be read. Grant one with'
@@ -857,6 +862,9 @@ export function createApp() {
 }
 
 export async function start({ port = PORT, dbFile = DB_FILE, uploadDir = UPLOAD_DIR } = {}) {
+  // Before the database opens, so a bad key stops the server rather than
+  // letting it come up quietly storing plaintext.
+  crypt.configure();
   db.open(dbFile);
   await files.init(uploadDir);
   seedBots();
