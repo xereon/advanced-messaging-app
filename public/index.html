@@ -337,7 +337,6 @@
           </div>
           <button type="submit" class="btn primary icon-btn send-btn" id="btn-send" aria-label="Send message" disabled><svg class="icon" aria-hidden="true"><use href="#i-send"/></svg></button>
           <span id="enter-hint" class="visually-hidden">Press Enter to send, Shift and Enter for a new line.</span>
-          <div class="menu emoji-menu" id="emoji-menu" hidden></div>
         </form>
       </section>
     </main>
@@ -374,6 +373,23 @@
           </div>
         </div>
 
+        <h3>Photo</h3>
+        <div class="avatar-editor">
+          <span class="avatar xl" id="avatar-preview" aria-hidden="true"></span>
+          <div class="avatar-editor-actions">
+            <label class="btn" for="avatar-file">
+              <svg class="icon sm" aria-hidden="true"><use href="#i-user"/></svg>Choose a photo
+            </label>
+            <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp" hidden>
+            <button type="button" class="btn" id="btn-remove-avatar" hidden>Remove</button>
+            <p class="hint">
+              A square crop from the middle, resized in your browser before it is
+              sent. PNG, JPEG or WebP.
+            </p>
+            <p class="field-error" id="avatar-error" role="alert" hidden></p>
+          </div>
+        </div>
+
         <h3>Identity</h3>
         <div class="setting-row">
           <label for="set-display-name">Display name</label>
@@ -406,6 +422,15 @@
         <div class="setting-row">
           <label id="avatar-color-label">Avatar colour</label>
           <div id="avatar-colors" class="avatar-colors" role="radiogroup" aria-labelledby="avatar-color-label"></div>
+        </div>
+
+        <div class="setting-row">
+          <label class="check-row">
+            <input type="checkbox" id="set-share-last-seen">
+            <span>Let people see when I was last online
+              <span class="hint">— off means they only see whether you are online now</span>
+            </span>
+          </label>
         </div>
 
         <h3>Status</h3>

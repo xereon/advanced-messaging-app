@@ -319,6 +319,19 @@ export function migrate() {
     updated_at: 'INTEGER',
   });
 
+  // Profile photos live on disk like attachments; only the pointer is here.
+  // avatar_updated_at is the cache-buster: without it a changed photo would sit
+  // behind an immutable cache header until the browser felt like re-checking.
+  addColumns('users', {
+    avatar_path: 'TEXT',
+    avatar_mime: 'TEXT',
+    avatar_updated_at: 'INTEGER',
+    // Whether other people may see when you were last here. On by default,
+    // because a messaging app where nobody knows if you are around is worse —
+    // but it is your call, so it is a column rather than a constant.
+    show_last_seen: 'INTEGER NOT NULL DEFAULT 1',
+  });
+
   // Suspension. `suspended_until` NULL alongside a non-null `suspended_at`
   // means indefinite; a timestamp means it lapses on its own, which is what
   // makes a cooling-off period possible without anyone remembering to undo it.
@@ -433,7 +446,14 @@ export function publicUser(row) {
     isBot: !!row.is_bot,
     retired: !!row.retired,
     createdAt: row.created_at,
-    lastSeen: row.last_seen,
+    // Withheld when they asked for it to be. `isOnline` is separate and still
+    // works: "here now" is what makes a conversation feel live, and hiding the
+    // history of when you were here does not have to cost that.
+    lastSeen: row.show_last_seen === 0 ? null : row.last_seen,
+    sharesLastSeen: row.show_last_seen !== 0,
+    avatarUrl: row.avatar_path
+      ? `/api/users/${encodeURIComponent(row.id)}/avatar?v=${row.avatar_updated_at || 0}`
+      : null,
     hasPin: !!row.pin_hash,
     // is_admin is deliberately absent. This shape goes out in search results,
     // profile cards and conversation member lists, so including it would hand

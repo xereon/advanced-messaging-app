@@ -395,6 +395,22 @@ export const blockedUsers = () => api.blockedUsers();
 export const submitReport = (payload) => api.submitReport(payload);
 export const submitFeedback = (payload) => api.submitFeedback(payload);
 
+export async function uploadAvatar(file) {
+  const { user } = await api.uploadAvatar(file);
+  me = { ...me, ...user };
+  cacheUser(user);
+  emit('users', { users: [user] });
+  return user;
+}
+
+export async function removeAvatar() {
+  const { user } = await api.removeAvatar();
+  me = { ...me, ...user };
+  cacheUser(user);
+  emit('users', { users: [user] });
+  return user;
+}
+
 /* ---------- push notifications ---------- */
 
 const urlBase64ToUint8Array = (base64) => {

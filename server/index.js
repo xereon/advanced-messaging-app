@@ -356,7 +356,8 @@ async function handleApi(req, res, url) {
 
   // File uploads keep their raw stream — reading it as JSON here would consume
   // the body before the upload handler ever sees it.
-  const isUpload = method === 'POST' && /^\/conversations\/[^/]+\/attachments$/.test(path);
+  const isUpload = method === 'POST'
+    && (/^\/conversations\/[^/]+\/attachments$/.test(path) || path === '/profile/avatar');
   const body = SAFE.has(method) || isUpload ? {} : await readBody(req);
   const need = () => { if (!me) throw new api.HttpError(401, 'Sign in first.'); return me; };
   let m;
@@ -782,6 +783,50 @@ async function handleApi(req, res, url) {
     // administrator than for anybody else.
     admin.requireAdmin(me);
     return fail(res, 404, 'Unknown endpoint.');
+  }
+
+  /* --- profile photos --- */
+
+  if (path === '/profile/avatar' && method === 'POST') {
+    const user = need();
+    if (!auth.rateLimit(`avatar:${user.id}`, { limit: 20, windowMs: 60 * 60 * 1000 })) {
+      return fail(res, 429, 'That is a lot of photo changes. Try again later.');
+    }
+    await files.storeAvatar(req, { userId: user.id });
+    const fresh = auth.findById(user.id);
+    // Everyone who can see them needs the new URL, or they keep the old photo
+    // until something else happens to refresh their cache.
+    rt.publish(rt.contactAudience(user.id), 'users', { users: [db.publicUser(fresh)] });
+    return send(res, 200, { user: db.selfUser(fresh) });
+  }
+
+  if (path === '/profile/avatar' && method === 'DELETE') {
+    const user = need();
+    await files.removeAvatar(user.id);
+    const fresh = auth.findById(user.id);
+    rt.publish(rt.contactAudience(user.id), 'users', { users: [db.publicUser(fresh)] });
+    return send(res, 200, { user: db.selfUser(fresh) });
+  }
+
+  if ((m = path.match(/^\/users\/([^/]+)\/avatar$/)) && method === 'GET') {
+    // Signed-in only. A profile photo is not secret among users, but it is not
+    // for the open internet to scrape either.
+    need();
+    const found = files.findAvatar(decodeURIComponent(m[1]));
+    if (!found) return fail(res, 404, 'No photo.');
+    const stream = createReadStream(found.path);
+    stream.on('error', () => {
+      if (!res.headersSent) fail(res, 404, 'No photo.'); else res.destroy();
+    });
+    res.writeHead(200, {
+      'Content-Type': found.mime,
+      // The URL carries ?v=<updated_at>, so a given URL really is immutable and
+      // a changed photo arrives as a different URL.
+      'Cache-Control': 'private, max-age=31536000, immutable',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return stream.pipe(res);
   }
 
   if (path === '/contacts' && method === 'POST') return send(res, 200, api.addContact(need(), body.contactId));

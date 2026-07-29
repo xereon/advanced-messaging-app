@@ -226,3 +226,93 @@ export async function removeForMessage(msgId) {
   for (const row of rows) await unlink(row.path).catch(() => {});
   handle().prepare('DELETE FROM attachments WHERE msg_id = ?').run(msgId);
 }
+
+/* ---------- profile photos ---------- */
+
+export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;   // 2 MB after the client's resize
+
+// Narrower than the attachment list on purpose. An avatar is rendered inline
+// everywhere, in a hundred places, so the type has to be one a browser will
+// only ever paint. No SVG in particular: it is a document that can carry script.
+const AVATAR_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+/**
+ * Store a profile photo, replacing whatever was there.
+ *
+ * The type is sniffed from the bytes rather than trusted from the request: the
+ * whole point of an allow-list is defeated if the client picks which entry it
+ * matches. Written to a fresh id each time, so a browser holding the old URL
+ * cannot be served the new image with stale dimensions.
+ */
+export async function storeAvatar(req, { userId }) {
+  const dir = join(uploadRoot, 'avatars');
+  await mkdir(dir, { recursive: true });
+  const id = `a-${randomUUID()}`;
+  const path = join(dir, id);
+
+  let size = 0;
+  let head = Buffer.alloc(0);
+  let tooBig = false;
+  const sink = createWriteStream(path);
+  try {
+    await pipeline(
+      req,
+      async function* (source) {
+        for await (const chunk of source) {
+          size += chunk.length;
+          if (size > MAX_AVATAR_BYTES) { tooBig = true; break; }
+          if (head.length < 4096) head = Buffer.concat([head, chunk]).subarray(0, 4096);
+          yield chunk;
+        }
+      },
+      sink,
+    );
+  } catch (err) {
+    await unlink(path).catch(() => {});
+    throw err;
+  }
+
+  const fail = async (status, message) => {
+    await unlink(path).catch(() => {});
+    const e = new Error(message);
+    e.status = status;
+    throw e;
+  };
+
+  if (tooBig) await fail(413, 'That image is larger than 2 MB, even after resizing.');
+  if (!size) await fail(400, 'No image was received.');
+
+  const mime = sniffMime(head);
+  if (!mime || !AVATAR_TYPES.has(mime)) {
+    await fail(415, 'Profile photos must be a PNG, JPEG or WebP image.');
+  }
+  if (process.env.RELAY_SCAN_COMMAND && !(await scanFile(path))) {
+    await fail(422, 'That file was rejected by the virus scanner.');
+  }
+
+  const previous = handle().prepare('SELECT avatar_path FROM users WHERE id = ?').get(userId)?.avatar_path;
+  handle().prepare(
+    'UPDATE users SET avatar_path = ?, avatar_mime = ?, avatar_updated_at = ? WHERE id = ?',
+  ).run(path, mime, Date.now(), userId);
+
+  // Only after the row points at the new file, so a crash in between leaves an
+  // orphan rather than a profile pointing at nothing.
+  if (previous && previous !== path) await unlink(previous).catch(() => {});
+  return { mime, size };
+}
+
+export async function removeAvatar(userId) {
+  const row = handle().prepare('SELECT avatar_path FROM users WHERE id = ?').get(userId);
+  handle().prepare(
+    'UPDATE users SET avatar_path = NULL, avatar_mime = NULL, avatar_updated_at = ? WHERE id = ?',
+  ).run(Date.now(), userId);
+  if (row?.avatar_path) await unlink(row.avatar_path).catch(() => {});
+}
+
+export function findAvatar(userId) {
+  const row = handle().prepare(
+    'SELECT avatar_path, avatar_mime, avatar_updated_at FROM users WHERE id = ?',
+  ).get(userId);
+  if (!row?.avatar_path) return null;
+  return { path: row.avatar_path, mime: row.avatar_mime, updatedAt: row.avatar_updated_at };
+}

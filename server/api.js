@@ -951,6 +951,11 @@ export function updateProfile(me, patch = {}) {
 
   const sets = ['name = ?', 'avatar_color = ?', 'updated_at = ?'];
   const values = [nextName, nextColor, Date.now()];
+
+  if (patch.shareLastSeen !== undefined) {
+    sets.push('show_last_seen = ?');
+    values.push(patch.shareLastSeen ? 1 : 0);
+  }
   for (const [column, value] of Object.entries(fields)) {
     if (value === undefined) continue;
     sets.push(`${column} = ?`);

@@ -2,19 +2,16 @@
 // dialogs, settings UI, keyboard shortcuts, sounds and notifications.
 
 import {
-  $, $$, uid, debounce, esc, renderRich, initials, fmtTime, fmtDay, fmtCompact, downloadFile,
+  $, $$, uid, debounce, esc, renderRich, mentionedHandles, initials, fmtTime, fmtDay,
+  fmtCompact, downloadFile,
 } from './util.js';
 import * as db from './store.js';
 import { getSettings, setSetting, resetSettings, THEMES, applySettings, loadSettings } from './settings.js';
+import * as emoji from './emoji.js';
 import { AVATAR_COLORS } from './palette.js';
 
-const REACT_SET = ['👍', '❤️', '😂', '🎉', '😮', '😢', '✅'];
-const EMOJI_SET = [
-  '😀', '😄', '😅', '😂', '🙂', '😉', '😊', '😍',
-  '🤔', '😐', '😴', '🥳', '😎', '🤝', '👍', '👎',
-  '👏', '🙏', '💪', '🎉', '✅', '❌', '⚠️', '❤️',
-  '🔥', '💯', '☕', '🍕', '🌟', '📅', '📈', '🚀',
-];
+// Both the reaction row and the composer now open the same picker; the quick
+// row is what you get before asking for all of it.
 
 let me = null;
 let signOutCb = null;
@@ -73,12 +70,31 @@ function confirmDialog(title, text, okLabel = 'Confirm') {
   });
 }
 
+/**
+ * Someone's avatar: their photo if they have one, their initials if not.
+ *
+ * The initials stay underneath rather than being replaced, so a photo that
+ * fails to load — deleted, expired session, offline — falls back to something
+ * legible instead of an empty circle. That is also why the colour is still set.
+ */
 function avatarEl(user, cls = 'avatar') {
   const span = document.createElement('span');
   span.className = cls;
   span.setAttribute('aria-hidden', 'true');
   span.style.setProperty('--av-bg', user?.avatarColor || '#334155');
   span.textContent = initials(user?.name || '?');
+
+  if (user?.avatarUrl) {
+    const img = document.createElement('img');
+    img.className = 'avatar-img';
+    img.src = user.avatarUrl;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.addEventListener('error', () => img.remove());
+    span.append(img);
+    span.classList.add('has-photo');
+  }
   return span;
 }
 
@@ -149,6 +165,26 @@ function notify(title, body, tag) {
 }
 
 /* ================= conversation derivations ================= */
+
+/**
+ * The handles of everyone in a conversation, for mention markup.
+ *
+ * Built from the members rather than from every account known: @ada should only
+ * light up where Ada can actually read it. Cached per render pass because the
+ * message list calls this once per message.
+ */
+let handleCache = { convoId: null, map: null };
+function handlesIn(convo) {
+  if (!convo) return null;
+  if (handleCache.convoId === convo.id && handleCache.map) return handleCache.map;
+  const map = new Map();
+  for (const id of convo.members) {
+    const user = db.getUser(id);
+    if (user?.username) map.set(user.username.toLowerCase(), user.name);
+  }
+  handleCache = { convoId: convo.id, map };
+  return map;
+}
 
 function convoView(convo) {
   if (convo.type === 'group') {
@@ -620,7 +656,11 @@ function directoryPeople() {
 
 function personSubtitle(person) {
   if (person.retired) return 'Former guest';
-  const presence = db.isOnline(person) ? 'Online' : 'Offline';
+  // "Offline" tells you nothing useful; "last seen 10 minutes ago" tells you
+  // whether waiting for a reply is reasonable. Withheld if they turned it off.
+  const presence = db.isOnline(person)
+    ? 'Online'
+    : (person.lastSeen ? lastSeenLabel(person).toLowerCase() : 'Offline');
   const status = statusLabel(person);
   const role = person.title || person.role;
   const parts = person.isBot
@@ -1359,7 +1399,7 @@ function messageEl(convo, m, { groupStart, groupEnd, highlight }) {
   if (m.deletedAt) {
     textEl.textContent = 'This message was deleted';
   } else {
-    let html = renderRich(m.text);
+    let html = renderRich(m.text, { mentions: handlesIn(convo), meHandle: me.username || null });
     if (highlight) {
       const re = new RegExp(highlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
       html = html.replace(/(>[^<]*<)|^[^<]+|[^>]+$/g, (chunk) =>
@@ -1657,7 +1697,124 @@ function refreshOwnStatuses() {
 /* ---------- react palette ---------- */
 
 let paletteEl = null;
+let pickerEl = null;
+// The element that opened the picker, so the same click cannot close it again.
+let pickerOpener = null;
 function closeReactPalette() { paletteEl?.remove(); paletteEl = null; }
+
+/**
+ * The full picker: categories down the side, a search box, and a grid.
+ *
+ * One implementation for both jobs — reacting to a message and inserting into
+ * the composer — because they are the same question asked twice. `onPick`
+ * decides what happens to the chosen character.
+ */
+function openEmojiPicker(anchor, onPick, opener = null) {
+  closeEmojiPicker();
+
+  const box = document.createElement('div');
+  box.className = 'emoji-picker';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', 'Choose an emoji');
+
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'emoji-search';
+  search.placeholder = 'Search — try "thanks" or "fire"';
+  search.setAttribute('aria-label', 'Search emoji');
+  search.autocomplete = 'off';
+
+  const tabs = document.createElement('div');
+  tabs.className = 'emoji-tabs';
+  tabs.setAttribute('role', 'tablist');
+
+  const grid = document.createElement('div');
+  grid.className = 'emoji-grid';
+  grid.setAttribute('role', 'listbox');
+
+  const status = document.createElement('p');
+  status.className = 'emoji-status';
+  status.setAttribute('role', 'status');
+
+  let active = emoji.recentEmoji().length ? 'recent' : 'people';
+
+  const paint = (list, emptyMessage) => {
+    grid.replaceChildren();
+    if (!list.length) {
+      status.textContent = emptyMessage;
+      return;
+    }
+    status.textContent = '';
+    for (const char of list) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'emoji-cell';
+      b.setAttribute('role', 'option');
+      b.textContent = char;
+      b.addEventListener('click', () => {
+        emoji.rememberEmoji(char);
+        onPick(char);
+      });
+      grid.append(b);
+    }
+  };
+
+  const showCategory = (id) => {
+    active = id;
+    for (const t of tabs.querySelectorAll('button')) {
+      t.setAttribute('aria-selected', String(t.dataset.cat === id));
+    }
+    if (id === 'recent') {
+      paint(emoji.recentEmoji(), 'Nothing yet — the ones you use will collect here.');
+      return;
+    }
+    const cat = emoji.CATEGORIES.find((c) => c.id === id);
+    paint((cat?.emoji || []).map(([char]) => char), '');
+  };
+
+  for (const cat of emoji.CATEGORIES) {
+    const t = document.createElement('button');
+    t.type = 'button';
+    t.dataset.cat = cat.id;
+    t.setAttribute('role', 'tab');
+    t.title = cat.name;
+    t.setAttribute('aria-label', cat.name);
+    t.textContent = cat.icon;
+    t.addEventListener('click', () => { search.value = ''; showCategory(cat.id); });
+    tabs.append(t);
+  }
+
+  search.addEventListener('input', () => {
+    const q = search.value.trim();
+    if (!q) { showCategory(active); return; }
+    for (const t of tabs.querySelectorAll('button')) t.setAttribute('aria-selected', 'false');
+    paint(emoji.searchEmoji(q), `Nothing matches "${q}".`);
+  });
+
+  box.append(search, tabs, grid, status);
+  document.body.append(box);
+  pickerEl = box;
+  pickerOpener = opener || (anchor instanceof Element ? anchor : null);
+  showCategory(active);
+  positionFloating(box, anchor);
+  search.focus();
+}
+
+function closeEmojiPicker() {
+  pickerEl?.remove();
+  pickerEl = null;
+  pickerOpener = null;
+}
+
+/** Keep a floating panel on screen, preferring above the thing that opened it. */
+function positionFloating(el, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  const above = r.top - h - 6;
+  el.style.top = `${above >= 8 ? above : Math.min(r.bottom + 6, window.innerHeight - h - 8)}px`;
+}
 
 function openReactPalette(anchor, convoId, msgId) {
   closeReactPalette();
@@ -1665,15 +1822,39 @@ function openReactPalette(anchor, convoId, msgId) {
   paletteEl.className = 'react-palette';
   paletteEl.setAttribute('role', 'menu');
   paletteEl.setAttribute('aria-label', 'Pick a reaction');
-  for (const emoji of REACT_SET) {
+  // Your own recents first, then the common ones — the fastest path is usually
+  // the emoji you just used.
+  const quick = [...new Set([...emoji.recentEmoji().slice(0, 6), ...emoji.QUICK_REACTIONS])].slice(0, 8);
+  for (const char of quick) {
     const b = document.createElement('button');
     b.type = 'button';
     b.setAttribute('role', 'menuitem');
-    b.setAttribute('aria-label', `React with ${emoji}`);
-    b.textContent = emoji;
-    b.addEventListener('click', () => { db.toggleReaction(convoId, msgId, emoji); closeReactPalette(); });
+    b.setAttribute('aria-label', `React with ${char}`);
+    b.textContent = char;
+    b.addEventListener('click', () => {
+      emoji.rememberEmoji(char);
+      db.toggleReaction(convoId, msgId, char);
+      closeReactPalette();
+    });
     paletteEl.append(b);
   }
+
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'react-more';
+  more.setAttribute('role', 'menuitem');
+  more.setAttribute('aria-label', 'More emoji');
+  more.textContent = '＋';
+  more.addEventListener('click', () => {
+    // The palette is about to be removed, so keep its position first.
+    const at = more.getBoundingClientRect();
+    closeReactPalette();
+    openEmojiPicker({ getBoundingClientRect: () => at }, (char) => {
+      db.toggleReaction(convoId, msgId, char);
+      closeEmojiPicker();
+    }, more);
+  });
+  paletteEl.append(more);
   document.body.append(paletteEl);
   const r = anchor.getBoundingClientRect();
   const pw = paletteEl.offsetWidth;
@@ -1938,11 +2119,19 @@ function closeMenus() {
     openMenuState = null;
   }
   closeReactPalette();
+  closeEmojiPicker();
 }
 
 document.addEventListener('click', (e) => {
   if (openMenuState && !openMenuState.menu.contains(e.target) && !openMenuState.button.contains(e.target)) closeMenus();
   if (paletteEl && !paletteEl.contains(e.target) && !e.target.closest('.msg-actions')) closeReactPalette();
+  // Not when the click came from whatever opened it: that same click bubbles to
+  // here, and the picker would open and shut in one gesture. The opener may
+  // already be detached (the reaction row is torn down), so compare identity as
+  // well as containment.
+  const fromOpener = pickerOpener
+    && (pickerOpener === e.target || pickerOpener.contains?.(e.target));
+  if (pickerEl && !pickerEl.contains(e.target) && !fromOpener) closeEmojiPicker();
 });
 
 /* ================= settings UI ================= */
@@ -2207,6 +2396,8 @@ function fillProfileForm() {
   $('#set-status-emoji').value = me.statusEmoji || '';
   $('#set-status-text').value = me.statusText || '';
   $('#set-timezone').value = me.timezone || '';
+  $('#set-share-last-seen').checked = me.sharesLastSeen !== false;
+  renderAvatarEditor();
   updateBioCount();
   updateTzPreview();
   renderOwnPreview();
@@ -2228,7 +2419,16 @@ function updateTzPreview() {
 function renderOwnPreview() {
   const av = $('#own-avatar');
   av.style.setProperty('--av-bg', me.avatarColor || '#334155');
+  av.replaceChildren();
   av.textContent = initials($('#set-display-name').value || me.name);
+  if (me.avatarUrl) {
+    const img = document.createElement('img');
+    img.className = 'avatar-img';
+    img.src = me.avatarUrl;
+    img.alt = '';
+    img.addEventListener('error', () => img.remove());
+    av.append(img);
+  }
   $('#own-preview-name').textContent = $('#set-display-name').value || me.name;
   const handle = $('#set-username').value.trim().replace(/^@+/, '');
   const meta = [
@@ -2239,6 +2439,66 @@ function renderOwnPreview() {
   $('#own-preview-meta').textContent = meta.join(' · ');
   const status = `${$('#set-status-emoji').value.trim()} ${$('#set-status-text').value.trim()}`.trim();
   $('#own-preview-status').textContent = status;
+}
+
+function renderAvatarEditor() {
+  const preview = $('#avatar-preview');
+  preview.replaceChildren(avatarEl(me, 'avatar xl'));
+  // The wrapper is only there to hold the real avatar element, so unwrap it.
+  preview.replaceWith(preview.firstChild);
+  const swapped = $('.avatar-editor .avatar');
+  swapped.id = 'avatar-preview';
+  $('#btn-remove-avatar').hidden = !me.avatarUrl;
+}
+
+function wireAvatarEditor() {
+  const file = $('#avatar-file');
+
+  file.addEventListener('change', async () => {
+    const chosen = file.files?.[0];
+    file.value = '';                     // so choosing the same file twice works
+    if (!chosen) return;
+    hideErr('#avatar-error');
+    try {
+      const updated = await db.uploadAvatar(chosen);
+      me = { ...me, ...updated };
+      renderAvatarEditor();
+      renderOwnPreview();
+      renderMe();
+      renderSidebar();
+      if (activeConvoId) renderConvoHeader();
+      toast('Photo updated', 'success');
+    } catch (err) {
+      showErr('#avatar-error', err.message);
+    }
+  });
+
+  $('#btn-remove-avatar').addEventListener('click', async () => {
+    hideErr('#avatar-error');
+    try {
+      const updated = await db.removeAvatar();
+      me = { ...me, ...updated };
+      renderAvatarEditor();
+      renderOwnPreview();
+      renderMe();
+      renderSidebar();
+      if (activeConvoId) renderConvoHeader();
+      toast('Photo removed', 'success');
+    } catch (err) {
+      showErr('#avatar-error', err.message);
+    }
+  });
+
+  $('#set-share-last-seen').addEventListener('change', async () => {
+    const share = $('#set-share-last-seen').checked;
+    try {
+      const updated = await db.updateProfile({ shareLastSeen: share });
+      me = { ...me, ...updated };
+    } catch (err) {
+      $('#set-share-last-seen').checked = !share;
+      toast(err.message, 'error');
+    }
+  });
 }
 
 function statusExpiryFromChoice() {
@@ -2385,6 +2645,7 @@ function wireProfilePanel() {
     });
   }
   $('#btn-save-profile').addEventListener('click', saveProfile);
+  wireAvatarEditor();
   $('#btn-detect-tz').addEventListener('click', () => {
     const guess = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (!guess) return toast('This browser will not report a time zone.', 'error');
@@ -2787,9 +3048,16 @@ function handleIncoming(convoId, msg) {
       db.markRead(convoId, me.id);
     } else {
       const meta = db.convoMeta(me.id, convoId);
-      if (!meta.muted) {
+      // Being named is the one thing that should reach you through a mute: you
+      // muted the conversation, not a direct request for your attention.
+      const namesMe = !!me.username
+        && mentionedHandles(msg.text, new Map([[me.username.toLowerCase(), me.name]])).size > 0;
+      if (!meta.muted || namesMe) {
+        const title = namesMe
+          ? `${author?.name || 'Someone'} mentioned you`
+          : (author?.name || 'New message');
         // One sound, not two: the system notification carries its own.
-        const shown = notify(author?.name || 'New message', msg.text.slice(0, 120), convoId);
+        const shown = notify(title, msg.text.slice(0, 120), convoId);
         if (!shown) playBlip();
       }
     }
@@ -2843,8 +3111,16 @@ function wireStoreEvents() {
     if ($('#new-chat-dialog').open) renderDirectory($('#new-chat-search').value);
   });
   db.on('presence-changed', () => { renderSidebar(); if (activeConvoId) renderConvoHeader(); });
-  db.on('conversations', () => renderSidebar());
-  db.on('users', () => { renderSidebar(); if (activeConvoId) renderConvoHeader(); });
+  db.on('conversations', () => {
+    handleCache = { convoId: null, map: null };   // members may have changed
+    renderSidebar();
+  });
+  db.on('users', () => {
+    // A newly known handle has to become mentionable, so drop the cache.
+    handleCache = { convoId: null, map: null };
+    renderSidebar();
+    if (activeConvoId) { renderConvoHeader(); renderMessages(); }
+  });
   db.on('error', ({ message }) => toast(message, 'error'));
   db.on('resynced', () => {
     renderSidebar();
@@ -2947,7 +3223,17 @@ function wireShortcuts() {
 function renderMe() {
   const av = $('#me-avatar');
   av.style.setProperty('--av-bg', me.avatarColor || '#334155');
+  av.replaceChildren();
   av.textContent = initials(me.name);
+  av.classList.toggle('has-photo', !!me.avatarUrl);
+  if (me.avatarUrl) {
+    const img = document.createElement('img');
+    img.className = 'avatar-img';
+    img.src = me.avatarUrl;
+    img.alt = '';
+    img.addEventListener('error', () => img.remove());
+    av.append(img);
+  }
   $('#user-menu-header').innerHTML = '<strong></strong><span></span>';
   $('#user-menu-header strong').textContent = me.name;
   $('#user-menu-header span').textContent = me.email || 'Guest session';
@@ -3166,21 +3452,19 @@ function wireConvoPane() {
     addFiles(e.dataTransfer.files);
   });
 
-  // Emoji picker
-  const emojiMenu = $('#emoji-menu');
-  emojiMenu.innerHTML = EMOJI_SET.map((e) => `<button type="button" aria-label="Insert ${e}">${e}</button>`).join('');
-  $('#btn-emoji').addEventListener('click', () => toggleMenu(emojiMenu, $('#btn-emoji')));
-  emojiMenu.addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    const emoji = b.textContent;
-    const start = input.selectionStart ?? input.value.length;
-    input.value = input.value.slice(0, start) + emoji + input.value.slice(input.selectionEnd ?? start);
-    input.focus();
-    input.selectionStart = input.selectionEnd = start + emoji.length;
-    autosize(input);
-    updateSendState();
-    closeMenus();
+  // Emoji
+  $('#btn-emoji').addEventListener('click', (e) => {
+    if (pickerEl) { closeEmojiPicker(); return; }
+    openEmojiPicker(e.currentTarget, (char) => {
+      const start = input.selectionStart ?? input.value.length;
+      input.value = input.value.slice(0, start) + char + input.value.slice(input.selectionEnd ?? start);
+      input.focus();
+      input.selectionStart = input.selectionEnd = start + char.length;
+      autosize(input);
+      updateSendState();
+      // Left open on purpose: picking two in a row is common, and reopening it
+      // for every character is the annoying way round.
+    });
   });
 }
 

@@ -93,6 +93,55 @@ export const sendTyping = (convoId) => post(`/conversations/${encodeURIComponent
 export const addContact = (contactId) => post('/contacts', { contactId });
 export const removeContact = (contactId) => del(`/contacts/${encodeURIComponent(contactId)}`);
 export const updateProfile = (payload) => patch('/profile', payload);
+export const removeAvatar = () => del('/profile/avatar');
+
+/**
+ * Crop to a centred square and downscale before uploading.
+ *
+ * An avatar is rendered at 40px in a list and 64px on a card, so sending a
+ * 4000px camera photo costs everyone who ever sees it. Done here rather than on
+ * the server to keep the no-dependencies promise — no image library needed.
+ */
+export async function squareForAvatar(file, edge = 512) {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+    throw new ApiError(415, 'Choose a PNG, JPEG or WebP image.');
+  }
+  if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const side = Math.min(bitmap.width, bitmap.height);
+    const size = Math.min(side, edge);
+    const canvas = new OffscreenCanvas(size, size);
+    const ctx = canvas.getContext('2d');
+    // Centre crop: take the middle square rather than squashing the aspect.
+    ctx.drawImage(
+      bitmap,
+      (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
+      0, 0, size, size,
+    );
+    bitmap.close?.();
+    const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+    const blob = await canvas.convertToBlob({ type, quality: 0.85 });
+    return blob ? new File([blob], file.name, { type: blob.type }) : file;
+  } catch {
+    return file;   // let the server decide rather than blocking the upload
+  }
+}
+
+export async function uploadAvatar(original) {
+  const file = await squareForAvatar(original);
+  const res = await fetch('/api/profile/avatar', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'X-Relay-Client': '1', 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+    duplex: 'half',
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!res.ok) throw new ApiError(res.status, data.error || 'Could not save that photo.');
+  return data;
+}
 export const saveSettings = (settings) => put('/settings', { settings });
 export const setPin = (pin) => post('/account/pin', { pin });
 export const changePassword = (current, next) => post('/account/password', { current, next });

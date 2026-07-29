@@ -7,7 +7,7 @@
 //
 // Bump CACHE when the shell changes; old caches are dropped on activate.
 
-const CACHE = 'relay-shell-v10';
+const CACHE = 'relay-shell-v11';
 
 const SHELL = [
   '/',
@@ -19,6 +19,7 @@ const SHELL = [
   '/js/ui.js',
   '/js/settings.js',
   '/js/palette.js',
+  '/js/emoji.js',
   '/js/util.js',
   '/manifest.webmanifest',
   '/icon.svg',

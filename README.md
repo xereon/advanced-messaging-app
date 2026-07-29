@@ -43,7 +43,7 @@ is git-ignored. A new account is seeded with a few conversations so the app is
 not empty on first sight.
 
 ```bash
-npm test     # 378 tests
+npm test     # 398 tests
 npm run dev  # restarts on file changes
 PORT=3000 npm start
 ```
@@ -376,6 +376,14 @@ muting, unread badges and dividers, groups, message formatting
 (`**bold**`, `*italic*`, `` `code` ``, auto-links), day separators, and JSON
 export of everything the server holds about you.
 
+**The emoji picker** holds 400-odd characters across six categories, searchable
+by the words you would actually type — "thanks" finds 🙏, "fire" finds 🔥 — and
+remembers what you used. Search matches the *start* of a keyword rather than
+anywhere inside one, because on a short query a substring match returns almost
+everything, which is the same as returning nothing. The quick reaction row leads
+with your recents and has a `＋` for the full set. Both the composer and the
+reaction row open the same picker; it is one question asked twice.
+
 **Finding people.** The sidebar carries a labelled **Find people** button, not
 only a compose icon. A new account arrives with an empty list and no obvious
 next step; an icon is discoverable to whoever already knows what it does.
@@ -412,6 +420,34 @@ or `_` are literal characters rather than SQL wildcards. An address is still
 only *disclosed* to people you already share a conversation with or have as a
 contact. Anyone you can find you can add to **contacts**, which get their own
 sidebar tab and sort to the top of search.
+
+**Profile photos.** Any account can upload one. The browser crops a centred
+square and downscales it before sending, so a 4000px camera photo does not cost
+everyone who ever sees it — and no image library is needed on the server, which
+keeps the no-dependencies promise. PNG, JPEG or WebP up to 2 MB after resizing.
+
+The type is **sniffed from the bytes**, never taken from the request: an SVG
+renamed `.png` is refused, because an SVG is a document that can carry script and
+avatars render inline in a hundred places. Photos need a session to fetch — a
+profile photo is not secret among users, but it is not for the open internet to
+scrape either. Each upload gets a fresh URL stamped with its timestamp, so the
+image can be cached immutably and a changed photo still appears at once. Initials
+stay underneath as the fallback, so a photo that fails to load leaves something
+legible rather than an empty circle.
+
+**Last online.** "Offline" tells you nothing useful; "last seen 20 minutes ago"
+tells you whether waiting for a reply is reasonable, so that is what the
+conversation header and profile card show. It is **yours to switch off** —
+Settings → Profile — and when it is off, others see only whether you are online
+right now. Presence and history are separate questions: hiding when you were
+last here does not cost the live "online now" dot that makes a conversation feel
+alive.
+
+**Mentions.** `@handle` lights up when it belongs to somebody in that
+conversation, and more strongly when it is you. Only real members are marked, so
+an `@` in ordinary prose — or an email address — stays ordinary text. Being
+named reaches you **through a mute**: you muted the conversation, not a direct
+request for your attention.
 
 **Profiles.** Every account has one: display name, username, pronouns, role, a short bio,
 an avatar colour, a time zone, and a status with an emoji that can expire on its

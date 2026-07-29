@@ -21,14 +21,43 @@ export function esc(str) {
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"')\]]+/g;
 
-/** Escape, then apply **bold** / *italic* / `code` and clickable links. */
-export function renderRich(text) {
+const MENTION_RE = /(^|[\s(])@([a-z0-9_]{3,20})\b/gi;
+
+/**
+ * Escape, then apply **bold** / *italic* / `code`, links and @mentions.
+ *
+ * `mentions` maps a lowercased handle to a display name. Only handles in that
+ * map are marked up, so an @ in ordinary prose stays ordinary text rather than
+ * every address-like word lighting up. `me` gets a stronger treatment, because
+ * "somebody was mentioned" and "you were mentioned" are different news.
+ */
+export function renderRich(text, { mentions = null, meHandle = null } = {}) {
   let html = esc(text);
   html = html.replace(URL_RE, (m) => `<a href="${m}" target="_blank" rel="noopener noreferrer">${m}</a>`);
   html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
   html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?])/g, '$1<em>$2</em>');
+
+  if (mentions && mentions.size) {
+    html = html.replace(MENTION_RE, (whole, lead, handle) => {
+      const key = handle.toLowerCase();
+      if (!mentions.has(key)) return whole;
+      const cls = key === meHandle ? 'mention mention-me' : 'mention';
+      // The handle is already escaped by esc() above; the class is ours.
+      return `${lead}<span class="${cls}">@${handle}</span>`;
+    });
+  }
   return html;
+}
+
+/** Which handles in this text belong to people who can actually see it. */
+export function mentionedHandles(text, handles) {
+  const found = new Set();
+  for (const m of String(text || '').matchAll(MENTION_RE)) {
+    const key = m[2].toLowerCase();
+    if (handles.has(key)) found.add(key);
+  }
+  return found;
 }
 
 export function initials(name) {
