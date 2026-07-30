@@ -867,6 +867,11 @@ async function handleApi(req, res, url) {
         me, decodeURIComponent(m[1]), m[2], body.status, { ip: clientIp(req) },
       ));
     }
+    if (path === '/admin/accounts' && method === 'GET') {
+      return send(res, 200, admin.searchAccounts(me, url.searchParams.get('q'), {
+        limit: url.searchParams.get('limit'),
+      }));
+    }
     if (path === '/admin/suspended' && method === 'GET') {
       return send(res, 200, admin.listSuspended(me));
     }

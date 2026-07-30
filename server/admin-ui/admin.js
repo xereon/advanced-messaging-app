@@ -339,6 +339,136 @@ async function unsuspend(user) {
   await Promise.all([refresh(), loadCounts()]);
 }
 
+/* ---------- accounts ---------- */
+
+// Filled in once /me answers, so our own row can say "you" instead of a
+// suspend button the server would refuse anyway.
+let myId = null;
+let acctQuery = '';
+let acctDebounce = null;
+
+function wireAccountSearch() {
+  const input = $('#account-search');
+  input.addEventListener('input', () => {
+    acctQuery = input.value;
+    clearTimeout(acctDebounce);
+    // Long enough that a fast typist does not fire one request per letter,
+    // short enough that the list still feels like it is following along.
+    acctDebounce = setTimeout(() => { if (tab === 'accounts') loadAccounts(); }, 300);
+  });
+}
+
+function accountCard(account) {
+  const card = document.createElement('article');
+  card.className = 'report';
+
+  const head = document.createElement('div');
+  head.className = 'report-head';
+  const who = document.createElement('div');
+  who.className = 'report-who';
+  const name = document.createElement('strong');
+  name.textContent = account.name;
+  who.append(name);
+  if (account.username) {
+    const handle = document.createElement('span');
+    handle.className = 'handle';
+    handle.textContent = ` @${account.username}`;
+    who.append(handle);
+  }
+  const meta = document.createElement('div');
+  meta.className = 'report-meta';
+  meta.textContent = `${account.email || 'guest'} · joined ${fmtAgo(account.createdAt)}`
+    + (account.lastSeen ? ` · last seen ${fmtAgo(account.lastSeen)}` : '');
+  who.append(meta);
+  head.append(who);
+
+  const tags = document.createElement('div');
+  if (account.id === myId) {
+    const tag = document.createElement('span');
+    tag.className = 'tag status-reviewed';
+    tag.textContent = 'you';
+    tags.append(tag);
+  }
+  if (account.isAdmin) {
+    const tag = document.createElement('span');
+    tag.className = 'tag status-reviewed';
+    tag.textContent = 'administrator';
+    tags.append(tag);
+  }
+  if (account.isGuest) {
+    const tag = document.createElement('span');
+    tag.className = 'tag status-dismissed';
+    tag.textContent = 'guest';
+    tags.append(tag);
+  }
+  if (account.suspended) {
+    const tag = document.createElement('span');
+    tag.className = 'tag status-actioned';
+    tag.textContent = account.suspension?.until ? `suspended until ${fmtWhen(account.suspension.until)}` : 'suspended';
+    tags.append(tag);
+  }
+  if (account.openReports > 0) {
+    const tag = document.createElement('span');
+    tag.className = 'tag repeat';
+    tag.textContent = `${account.openReports} open report${account.openReports === 1 ? '' : 's'}`;
+    tags.append(tag);
+  }
+  if (tags.children.length) head.append(tags);
+  card.append(head);
+
+  if (account.suspension?.reason) {
+    const reason = document.createElement('p');
+    reason.className = 'report-note';
+    reason.textContent = account.suspension.reason;
+    card.append(reason);
+  }
+
+  // Nothing to do to your own account or another administrator's from here —
+  // the server would refuse both, so the button is not offered in the first
+  // place rather than shown and then failing.
+  if (account.id !== myId && !account.isAdmin) {
+    const row = document.createElement('div');
+    row.className = 'report-actions';
+    if (account.suspended) {
+      const lift = document.createElement('button');
+      lift.type = 'button';
+      lift.className = 'btn sm primary';
+      lift.textContent = 'Lift suspension';
+      lift.addEventListener('click', async () => {
+        lift.disabled = true;
+        try { await unsuspend(account); }
+        catch (err) { toast(err.message, 'error'); lift.disabled = false; }
+      });
+      row.append(lift);
+    } else {
+      const suspend = document.createElement('button');
+      suspend.type = 'button';
+      suspend.className = 'btn sm danger';
+      suspend.textContent = 'Suspend…';
+      suspend.addEventListener('click', () => openSuspend(account));
+      row.append(suspend);
+    }
+    card.append(row);
+  }
+
+  return card;
+}
+
+async function loadAccounts() {
+  const list = $('#accounts-list');
+  const { accounts } = await call('GET', `/admin/accounts?q=${encodeURIComponent(acctQuery)}`);
+  list.replaceChildren();
+
+  if (!accounts.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = acctQuery ? `No account matches "${acctQuery}".` : 'No accounts yet.';
+    list.append(empty);
+    return;
+  }
+  for (const account of accounts) list.append(accountCard(account));
+}
+
 async function loadSuspended() {
   const list = $('#suspended-list');
   const { suspended } = await call('GET', '/admin/suspended');
@@ -772,7 +902,7 @@ async function loadAudit() {
 /* ---------- tabs ---------- */
 
 const LOADERS = {
-  queue: loadReports, suspended: loadSuspended, appeals: loadAppeals,
+  queue: loadReports, accounts: loadAccounts, suspended: loadSuspended, appeals: loadAppeals,
   feedback: loadFeedback, overview: loadOverview, audit: loadAudit,
 };
 let tab = 'queue';
@@ -827,10 +957,12 @@ async function start() {
   }
   $('#btn-refresh').addEventListener('click', refresh);
   wireSuspend();
+  wireAccountSearch();
 
   try {
     const { user } = await call('GET', '/me');
     $('#whoami').textContent = `${user.name} · administrator`;
+    myId = user.id;
   } catch { /* the banner covers it */ }
 
   await Promise.all([refresh(), loadCounts()]);

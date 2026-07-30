@@ -669,9 +669,25 @@ about somebody's own screen.
   the revealed text puts it away again — the same spot, both directions, so you
   are not stuck looking at something once you have read it.
 
-**Suspension** is the enforcement lever, offered on the report card itself so
-reading a report and acting on it are the same screen. Pick 24 hours, 7 days,
-30 days or open-ended, and write a reason.
+**Moderating an account directly**, from the Accounts tab, is the other way in —
+not everyone worth suspending has been reported yet. Nothing typed shows the
+newest signups, since the moment an abusive account is most worth catching is
+right after it is made. A typed query matches a name or username *anywhere* in
+it, not just as a prefix — deliberately looser than the public directory search,
+because showing too much here is not a privacy leak, it is the job — or an exact
+email address, or an account id pasted straight from a report or the audit log.
+Each result carries how many open reports name them and, if they are already
+suspended, the reason and end date, so acting on one does not mean a detour
+through the Reports tab first. Suspending or lifting here is the identical action
+as from a report card — same route, same audit entry — just reached without
+one existing. Bots are not something anyone moderates, and a retired guest
+cannot sign in again regardless, so both are left out. An administrator's own
+account, and any other administrator's, is labelled rather than given a button
+that the server would only refuse.
+
+**Suspension** is the enforcement lever, offered on the report card itself, or
+from the Accounts tab, so reading about someone and acting on it are the same
+screen. Pick 24 hours, 7 days, 30 days or open-ended, and write a reason.
 
 A suspended account has no way in. Every device is signed out immediately — the
 session rows are deleted, not merely rejected — and password, one-time email

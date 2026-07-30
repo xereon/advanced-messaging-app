@@ -48,6 +48,7 @@ describe('the dashboard does not exist for anyone else', () => {
   const ADMIN_API = [
     ['GET', '/api/admin/overview'],
     ['GET', '/api/admin/reports'],
+    ['GET', '/api/admin/accounts'],
     ['GET', '/api/admin/audit'],
     ['GET', '/api/admin/anything-else'],
   ];
@@ -430,5 +431,175 @@ describe('the served page', () => {
     const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
     assert.match(sw, /\/admin/,
       'the worker must skip /admin, or it caches the queue and clobbers the app shell');
+  });
+});
+
+/* ---------- moderating accounts by search ---------- */
+
+describe('finding an account to moderate', () => {
+  test('with nothing typed, the newest accounts come first', async () => {
+    const boss = await signUp(srv.base, 'Newest Boss', 'newest.boss@admin.test');
+    makeAdmin(boss.user.id);
+    const older = await signUp(srv.base, 'Older Newest', 'older.newest@admin.test');
+    const newer = await signUp(srv.base, 'Newer Newest', 'newer.newest@admin.test');
+    // Forced apart and pushed ahead of everything this file has created so far
+    // (this suite shares one database across every describe block), so both
+    // are guaranteed to sort within the newest-50 window regardless of how
+    // many accounts earlier tests left behind.
+    const future = Date.now() + 10_000_000;
+    db.handle().prepare('UPDATE users SET created_at = ? WHERE id = ?').run(future, older.user.id);
+    db.handle().prepare('UPDATE users SET created_at = ? WHERE id = ?').run(future + 1000, newer.user.id);
+
+    const res = await boss.client.get('/api/admin/accounts');
+    assert.equal(res.status, 200);
+    const ids = res.body.accounts.map((a) => a.id);
+    assert.ok(ids.indexOf(newer.user.id) < ids.indexOf(older.user.id),
+      'the more recently created account should sort first');
+  });
+
+  test('a bot is not something anyone moderates', async () => {
+    const boss = await signUp(srv.base, 'Bot Boss', 'bot.boss@admin.test');
+    makeAdmin(boss.user.id);
+    const bot = await signUp(srv.base, 'A Bot Account', 'a.bot.account@admin.test');
+    db.handle().prepare('UPDATE users SET is_bot = 1 WHERE id = ?').run(bot.user.id);
+
+    const res = await boss.client.get('/api/admin/accounts?q=Bot Account');
+    assert.equal(res.status, 200);
+    assert.ok(!res.body.accounts.some((a) => a.id === bot.user.id));
+  });
+
+  test('a retired guest cannot sign in again, so it is not offered here', async () => {
+    const boss = await signUp(srv.base, 'Retired Boss', 'retired.boss@admin.test');
+    makeAdmin(boss.user.id);
+    const g = client(srv.base);
+    const signup = await g.post('/api/auth/guest');
+    const guestId = signup.body.user.id;
+    db.handle().prepare('UPDATE users SET retired = 1, name = ? WHERE id = ?')
+      .run('Ghost Retired Guest', guestId);
+
+    const res = await boss.client.get('/api/admin/accounts?q=Ghost Retired');
+    assert.equal(res.status, 200);
+    assert.ok(!res.body.accounts.some((a) => a.id === guestId));
+  });
+
+  test('an active guest is a real moderation target', async () => {
+    const boss = await signUp(srv.base, 'Guest Boss', 'guest.boss@admin.test');
+    makeAdmin(boss.user.id);
+    const g = client(srv.base);
+    const signup = await g.post('/api/auth/guest');
+    const guestId = signup.body.user.id;
+    const guestName = signup.body.user.name;
+
+    const res = await boss.client.get(`/api/admin/accounts?q=${encodeURIComponent(guestName)}`);
+    assert.equal(res.status, 200);
+    const found = res.body.accounts.find((a) => a.id === guestId);
+    assert.ok(found, 'the guest should appear');
+    assert.equal(found.isGuest, true);
+  });
+
+  test('a query matches a fragment of a name, not only a prefix', async () => {
+    const boss = await signUp(srv.base, 'Fragment Boss', 'fragment.boss@admin.test');
+    makeAdmin(boss.user.id);
+    const target = await signUp(srv.base, 'Zzyzx Wanderlust', 'zzyzx.wanderlust@admin.test');
+
+    // "wander" is nowhere near the start of the name — this is what tells the
+    // admin search apart from the public directory, which is prefix-only.
+    const res = await boss.client.get('/api/admin/accounts?q=wander');
+    assert.equal(res.status, 200);
+    assert.ok(res.body.accounts.some((a) => a.id === target.user.id));
+  });
+
+  test('a query matches a username fragment too', async () => {
+    const boss = await signUp(srv.base, 'Handle Boss', 'handle.boss@admin.test');
+    makeAdmin(boss.user.id);
+    const target = await signUp(srv.base, 'Someone', 'handle.target@admin.test');
+    await target.client.patch('/api/profile', { username: 'weird_spammer_handle' });
+
+    const res = await boss.client.get('/api/admin/accounts?q=spammer');
+    assert.equal(res.status, 200);
+    assert.ok(res.body.accounts.some((a) => a.id === target.user.id));
+  });
+
+  test('email matches only the full address, not a fragment of it', async () => {
+    const boss = await signUp(srv.base, 'Email Boss', 'email.boss@admin.test');
+    makeAdmin(boss.user.id);
+    const target = await signUp(srv.base, 'Exact Email', 'exact.email.target@admin.test');
+
+    const exact = await boss.client.get('/api/admin/accounts?q=exact.email.target@admin.test');
+    assert.ok(exact.body.accounts.some((a) => a.id === target.user.id));
+
+    const fragment = await boss.client.get('/api/admin/accounts?q=exact.email.target');
+    // Still findable — it also matches the name/username path — but a bare
+    // email fragment must not be treated as a partial address match.
+    const byEmailOnly = await boss.client.get('/api/admin/accounts?q=email.target@admin');
+    assert.ok(!byEmailOnly.body.accounts.some((a) => a.id === target.user.id));
+    assert.ok(fragment.status === 200);
+  });
+
+  test('an id can be pasted straight in from a report or the audit log', async () => {
+    const boss = await signUp(srv.base, 'Id Boss', 'id.boss@admin.test');
+    makeAdmin(boss.user.id);
+    const target = await signUp(srv.base, 'Findable By Id', 'findable.id@admin.test');
+
+    const res = await boss.client.get(`/api/admin/accounts?q=${encodeURIComponent(target.user.id)}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.accounts.length, 1);
+    assert.equal(res.body.accounts[0].id, target.user.id);
+  });
+
+  test('shows how many open reports name this account, and stops counting dismissed ones', async () => {
+    const { boss, rogue } = await scene('count');
+    let res = await boss.client.get(`/api/admin/accounts?q=${encodeURIComponent(rogue.user.id)}`);
+    assert.equal(res.body.accounts[0].openReports, 1);
+
+    // A second report against the same person.
+    const convo = await rogue.client.post('/api/conversations', { type: 'dm', members: [boss.user.id] });
+    const msg = await rogue.client.post(`/api/conversations/${convo.body.conversation.id}/messages`, { text: 'again' });
+    const second = await boss.client.post('/api/reports', {
+      subjectId: rogue.user.id, convoId: convo.body.conversation.id, messageId: msg.body.message.id, reason: 'spam',
+    });
+    res = await boss.client.get(`/api/admin/accounts?q=${encodeURIComponent(rogue.user.id)}`);
+    assert.equal(res.body.accounts[0].openReports, 2);
+
+    // Dismissing one drops the count; the other, still open, keeps it off zero.
+    await boss.client.patch(`/api/admin/reports/${second.body.id}`, { status: 'dismissed' });
+    res = await boss.client.get(`/api/admin/accounts?q=${encodeURIComponent(rogue.user.id)}`);
+    assert.equal(res.body.accounts[0].openReports, 1);
+  });
+
+  test('reflects a suspension immediately, and clears it just as fast', async () => {
+    const { boss, rogue } = await scene('reflect');
+    const q = encodeURIComponent(rogue.user.id);
+
+    let res = await boss.client.get(`/api/admin/accounts?q=${q}`);
+    assert.equal(res.body.accounts[0].suspended, false);
+    assert.equal(res.body.accounts[0].suspension, null);
+
+    await boss.client.post(`/api/admin/users/${rogue.user.id}/suspension`, { days: 7, reason: 'spam links' });
+    res = await boss.client.get(`/api/admin/accounts?q=${q}`);
+    assert.equal(res.body.accounts[0].suspended, true);
+    assert.equal(res.body.accounts[0].suspension.reason, 'spam links');
+    assert.ok(res.body.accounts[0].suspension.until > Date.now());
+
+    await boss.client.del(`/api/admin/users/${rogue.user.id}/suspension`);
+    res = await boss.client.get(`/api/admin/accounts?q=${q}`);
+    assert.equal(res.body.accounts[0].suspended, false);
+  });
+
+  test('an administrator is labelled as one', async () => {
+    const boss = await signUp(srv.base, 'Label Boss', 'label.boss@admin.test');
+    makeAdmin(boss.user.id);
+
+    const res = await boss.client.get(`/api/admin/accounts?q=${encodeURIComponent(boss.user.id)}`);
+    assert.equal(res.body.accounts[0].isAdmin, true);
+  });
+
+  test('an unmatched query is an empty list, not an error', async () => {
+    const boss = await signUp(srv.base, 'Empty Boss', 'empty.boss@admin.test');
+    makeAdmin(boss.user.id);
+
+    const res = await boss.client.get('/api/admin/accounts?q=no-such-person-anywhere-zzz');
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.accounts, []);
   });
 });

@@ -175,6 +175,24 @@ main { max-width: 62rem; margin: 0 auto; padding: 1.25rem; }
 }
 @media (prefers-color-scheme: dark) { .chip[aria-pressed="true"] { color: #1a0f16; } }
 
+/* ---------- accounts ---------- */
+
+.search-field {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0.55rem 0.8rem;
+  margin-bottom: 0.75rem; color: var(--text-3);
+}
+.search-field:focus-within { border-color: var(--accent); color: var(--text-2); }
+.search-field input {
+  flex: 1; border: 0; background: none; color: var(--text); font: inherit;
+  min-width: 0;
+}
+.search-field input:focus { outline: none; }
+/* The native clear (x) button on type="search" inputs, restyled to match rather
+   than left as the browser's unstyled default. */
+.search-field input::-webkit-search-cancel-button { cursor: pointer; }
+
 /* ---------- reports ---------- */
 
 .report-list { display: flex; flex-direction: column; gap: 0.9rem; }

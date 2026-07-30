@@ -14,7 +14,7 @@
 // already do.
 
 import { handle, suspensionOf } from './db.js';
-import { open as unseal } from './crypt.js';
+import { open as unseal, lookupHash } from './crypt.js';
 import * as auth from './auth.js';
 
 const REPORT_STATUSES = ['open', 'reviewed', 'actioned', 'dismissed'];
@@ -219,6 +219,95 @@ export function listReports(me, { status = 'open', limit = 100 } = {}) {
     })),
     statuses: REPORT_STATUSES,
   };
+}
+
+/* ---------- accounts ---------- */
+
+/**
+ * Same escaping problem as the public directory search: `_` and `%` are SQL
+ * LIKE wildcards, and a username is allowed to contain the first of them. Kept
+ * as its own copy rather than imported from api.js, so this file's only
+ * dependencies stay db.js, crypt.js and auth.js — the three a security review
+ * of the admin surface actually needs to read.
+ */
+const likeLiteral = (s) => String(s).replace(/[\%_]/g, '\$&');
+
+/**
+ * Every account fact a moderation decision needs, in one row.
+ *
+ * Unlike the public directory search, this does not hide suspended accounts,
+ * does not require a minimum query length, and answers with the admin flag —
+ * all things that would be a privacy problem for an ordinary search and are
+ * the entire point of this one.
+ */
+function shapeAccount(row, countReportsStmt) {
+  return {
+    id: row.id,
+    name: row.name,
+    username: row.username || null,
+    email: row.email ? unseal(row.email) : null,
+    isGuest: !!row.is_guest,
+    isAdmin: !!row.is_admin,
+    createdAt: row.created_at,
+    lastSeen: row.last_seen || null,
+    suspended: !!suspensionOf(row),
+    suspension: row.suspended_at
+      ? { at: row.suspended_at, until: row.suspended_until, reason: row.suspended_reason }
+      : null,
+    openReports: countReportsStmt.get(row.id)?.n ?? 0,
+  };
+}
+
+/**
+ * Find accounts to moderate.
+ *
+ * An empty query shows the newest signups, which is the useful thing to look at
+ * with nothing typed — the moment an abusive account is most worth catching is
+ * right after it is made, before it has done anything reported yet. A typed
+ * query matches a username or name anywhere in it, not just as a prefix: a
+ * moderator often has only a fragment to go on, and unlike the public search,
+ * showing too much here is not a privacy leak — it is the job.
+ *
+ * Bots are excluded; they are fixtures of the demo, not accounts anyone
+ * moderates. Retired guests are excluded too — the row survives only so old
+ * messages still resolve a name, and an account that can never sign in again is
+ * not one suspension does anything to.
+ */
+export function searchAccounts(me, q, { limit = 50 } = {}) {
+  requireAdmin(me);
+  const db = handle();
+  const capped = Math.min(Math.max(Number(limit) || 50, 1), 100);
+  const countReports = db.prepare(
+    "SELECT COUNT(*) AS n FROM reports WHERE subject_id = ? AND status != 'dismissed'",
+  );
+
+  const raw = String(q || '').trim();
+  const term = raw.replace(/^@+/, '').toLowerCase();
+
+  if (!term) {
+    const rows = db.prepare(
+      `SELECT * FROM users WHERE is_bot = 0 AND retired = 0 ORDER BY created_at DESC LIMIT ?`,
+    ).all(capped);
+    return { accounts: rows.map((r) => shapeAccount(r, countReports)), query: '' };
+  }
+
+  const literal = likeLiteral(term);
+  const contains = `%${literal}%`;
+  // Meaningful only when the term is actually an address; harmless otherwise.
+  const emailHmac = lookupHash(term);
+  const rows = db.prepare(`
+    SELECT * FROM users
+     WHERE is_bot = 0 AND retired = 0
+       AND (LOWER(IFNULL(username,'')) LIKE ? ESCAPE '\\'
+         OR LOWER(name) LIKE ? ESCAPE '\\'
+         OR (? IS NOT NULL AND email_hmac = ?)
+         OR (? IS NULL AND LOWER(IFNULL(email,'')) = ?)
+         -- Pasting an id from a report or the audit log should land here too.
+         OR id = ?)
+     ORDER BY name LIMIT ?`)
+    .all(contains, contains, emailHmac, emailHmac, emailHmac, term, raw, capped);
+
+  return { accounts: rows.map((r) => shapeAccount(r, countReports)), query: term };
 }
 
 /* ---------- suspension ---------- */
