@@ -390,6 +390,7 @@ export const registerPasskey = (label) => api.registerPasskey(label);
 export const listPasskeys = () => api.listPasskeys();
 export const deletePasskey = (id) => api.deletePasskey(id);
 export const uploadAttachment = (convoId, file, opts) => api.uploadAttachment(convoId, file, opts);
+export const uploadVoiceNote = (convoId, blob, durationMs) => api.uploadVoiceNote(convoId, blob, durationMs);
 export const setPin = (pin) => api.setPin(pin);
 export const changePassword = (current, next) => api.changePassword(current, next);
 export const exportData = () => api.exportData();

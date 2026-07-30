@@ -332,6 +332,12 @@ export function migrate() {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_id ON sessions(id)');
   backfillSessionIds();
 
+  // A voice note is an attachment with two extra facts: that a human recorded it
+  // rather than picked a file, and how long it runs. The duration is the
+  // recorder's own figure, clamped on the way in — it decides how wide a bubble
+  // is drawn and nothing else, so it never needs to be trusted further than that.
+  addColumns('attachments', { voice: 'INTEGER', duration_ms: 'INTEGER' });
+
   // A keyed hash of the email, because an encrypted address cannot be looked up
   // or kept unique: the ciphertext differs every time it is written. This column
   // is what sign-in, password reset and the exact-address directory match use

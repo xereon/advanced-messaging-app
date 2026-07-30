@@ -149,7 +149,7 @@ const publicCredential = (row) => ({
  * uploaded can execute in the origin. A restrictive CSP backs that up.
  */
 async function streamAttachment(req, res, row, forceDownload) {
-  const inline = files.isInlineImage(row.mime) && !forceDownload;
+  const inline = files.isServedInline(row.mime) && !forceDownload;
   const disposition = inline ? 'inline' : 'attachment';
   const asciiName = row.name.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '');
 
@@ -734,11 +734,17 @@ async function handleApi(req, res, url) {
     if (overWriteLimit('upload', user)) return;
     const convoId = decodeURIComponent(m[1]);
     api.assertConvoMember(convoId, user.id);
+    // A voice note takes the same path as any other upload — same size cap, same
+    // sniffing, same scanner — and differs only in which sniffer decides its
+    // type and in the two facts recorded alongside it.
+    const voice = req.headers['x-relay-voice'] === '1';
     const attachment = await files.store(req, {
       userId: user.id,
       convoId,
       name: decodeURIComponent(String(req.headers['x-relay-filename'] || 'file')),
       declaredMime: String(req.headers['content-type'] || '').split(';')[0],
+      voice,
+      durationMs: voice ? Number(req.headers['x-relay-duration'] || 0) : 0,
     });
     return send(res, 201, { attachment });
   }

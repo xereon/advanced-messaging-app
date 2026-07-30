@@ -281,6 +281,31 @@ export async function uploadAttachment(convoId, original, { onProgress } = {}) {
   return data.attachment;
 }
 
+/**
+ * Uploads a recording. Same endpoint and same size cap as any attachment; the
+ * two extra headers are what mark it as something a person recorded and how long
+ * it runs.
+ */
+export async function uploadVoiceNote(convoId, blob, durationMs) {
+  const res = await fetch(`/api/conversations/${encodeURIComponent(convoId)}/attachments`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'X-Relay-Client': '1',
+      'X-Relay-Filename': encodeURIComponent('voice-note'),
+      'X-Relay-Voice': '1',
+      'X-Relay-Duration': String(Math.max(0, Math.round(durationMs) || 0)),
+      'Content-Type': blob.type || 'audio/webm',
+    },
+    body: blob,
+    duplex: 'half',
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!res.ok) throw new ApiError(res.status, data.error || 'The recording could not be sent.');
+  return data.attachment;
+}
+
 /* ---------- live stream ---------- */
 
 /** Opens the SSE stream. EventSource reconnects by itself and replays missed

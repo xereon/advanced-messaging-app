@@ -28,6 +28,30 @@ const INLINE_TYPES = new Map([
 
 export const isInlineImage = (mime) => INLINE_TYPES.has(mime);
 
+/**
+ * Audio containers a voice note can arrive in, and the only non-image types
+ * served inline rather than as a download.
+ *
+ * A voice note has to be playable where it sits — handing someone a file to
+ * download and open elsewhere is not a voice message. Serving these inline is
+ * the same bet already taken on images: the browser decodes the bytes with its
+ * media decoder and never executes them, and the response still carries
+ * `default-src 'none'; sandbox` and `nosniff`, so a file renamed to look like
+ * audio cannot become script.
+ *
+ * MediaRecorder produces webm/opus on Chrome and Firefox and mp4/aac on Safari,
+ * so both have to be accepted for the feature to work at all.
+ */
+const PLAYABLE_AUDIO = new Set(['audio/webm', 'audio/ogg', 'audio/mp4']);
+
+export const isPlayableAudio = (mime) => PLAYABLE_AUDIO.has(mime);
+
+/** Anything the browser may render in place rather than hand over as a file. */
+export const isServedInline = (mime) => INLINE_TYPES.has(mime) || PLAYABLE_AUDIO.has(mime);
+
+/** A recording longer than this is a phone left in a pocket, not a message. */
+export const MAX_VOICE_MS = 5 * 60 * 1000;
+
 let uploadRoot = null;
 
 export async function init(root) {
@@ -45,6 +69,29 @@ export function sniffMime(head) {
   if (b.length >= 6 && (b.subarray(0, 6).toString('latin1') === 'GIF87a' || b.subarray(0, 6).toString('latin1') === 'GIF89a')) return 'image/gif';
   if (b.length >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
   if (b.length >= 12 && b.subarray(4, 8).toString('latin1') === 'ftyp' && b.subarray(8, 12).toString('latin1').startsWith('avif')) return 'image/avif';
+  return null;
+}
+
+/**
+ * The container a recording arrived in, or null if it is not one we play.
+ *
+ * Deliberately separate from sniffMime: that one governs every upload, and
+ * widening it would mean ordinary attachments start being served inline. These
+ * magic numbers are shared with the video forms of the same containers — no
+ * cheap header read distinguishes a webm holding one Opus track from one holding
+ * video — so this answers "is this a media container we are willing to play",
+ * and the voice flag on the row is what says a human recorded it. The worst case
+ * is somebody routing a video file through the recorder and hearing its
+ * soundtrack, which costs nothing; a file that is not a media container at all
+ * is refused outright.
+ */
+export function sniffAudioContainer(head) {
+  const b = Buffer.from(head);
+  if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'audio/webm';
+  if (b.length >= 4 && b.subarray(0, 4).toString('latin1') === 'OggS') return 'audio/ogg';
+  // Safari's MediaRecorder emits mp4; the brand varies by version, so any ISO
+  // base-media brand is accepted here where it would not be for an attachment.
+  if (b.length >= 12 && b.subarray(4, 8).toString('latin1') === 'ftyp') return 'audio/mp4';
   return null;
 }
 
@@ -79,7 +126,7 @@ export function imageSize(buf, mime) {
  * Consume a request stream into a stored file. The caller has already proven
  * the uploader is a member of the conversation.
  */
-export async function store(req, { userId, convoId, name, declaredMime }) {
+export async function store(req, { userId, convoId, name, declaredMime, voice = false, durationMs = 0 }) {
   const id = `f-${randomUUID()}`;
   const dir = join(uploadRoot, convoId.replace(/[^a-zA-Z0-9:_~-]/g, '_'));
   await mkdir(dir, { recursive: true });
@@ -141,14 +188,31 @@ export async function store(req, { userId, convoId, name, declaredMime }) {
   await sealFileInPlace(path);
 
   // Trust the sniffed type over the client's claim; fall back to a download.
-  const sniffed = sniffMime(head);
-  const mime = sniffed || (INLINE_TYPES.has(declaredMime) ? null : 'application/octet-stream') || 'application/octet-stream';
+  let mime;
+  if (voice) {
+    // A recording that is not a container we can play is not a recording. Better
+    // to refuse it than to store something nobody will ever be able to hear.
+    const container = sniffAudioContainer(head);
+    if (!container) {
+      await unlink(path).catch(() => {});
+      const e = new Error('That recording was not in a format we can play.');
+      e.status = 415;
+      throw e;
+    }
+    mime = container;
+  } else {
+    const sniffed = sniffMime(head);
+    mime = sniffed || (INLINE_TYPES.has(declaredMime) ? null : 'application/octet-stream') || 'application/octet-stream';
+  }
   const dims = isInlineImage(mime) ? imageSize(head, mime) : { width: null, height: null };
+  // Clamped, not trusted: the figure comes from the recorder in the browser.
+  const duration = voice ? Math.min(MAX_VOICE_MS, Math.max(0, Math.round(Number(durationMs) || 0))) : null;
 
   handle().prepare(
-    `INSERT INTO attachments (id, msg_id, convo_id, user_id, name, mime, size, width, height, path, created_at)
-     VALUES (?,NULL,?,?,?,?,?,?,?,?,?)`,
-  ).run(id, convoId, userId, safeName(name), mime, size, dims.width, dims.height, path, Date.now());
+    `INSERT INTO attachments (id, msg_id, convo_id, user_id, name, mime, size, width, height, path, created_at, voice, duration_ms)
+     VALUES (?,NULL,?,?,?,?,?,?,?,?,?,?,?)`,
+  ).run(id, convoId, userId, safeName(name), mime, size, dims.width, dims.height, path, Date.now(),
+    voice ? 1 : 0, duration);
 
   return shape(handle().prepare('SELECT * FROM attachments WHERE id = ?').get(id));
 }
@@ -183,6 +247,8 @@ export function shape(row) {
     width: row.width,
     height: row.height,
     isImage: isInlineImage(row.mime),
+    isVoice: !!row.voice,
+    durationMs: row.duration_ms || null,
     url: `/api/attachments/${row.id}`,
   };
 }

@@ -8,6 +8,7 @@ import {
 import * as db from './store.js';
 import { getSettings, setSetting, resetSettings, THEMES, applySettings, loadSettings } from './settings.js';
 import * as emoji from './emoji.js';
+import * as recorder from './recorder.js';
 import { AVATAR_COLORS } from './palette.js';
 
 // Both the reaction row and the composer now open the same picker; the quick
@@ -1725,6 +1726,27 @@ function attachmentsEl(msg) {
       link.append(img);
       link.setAttribute('aria-label', `Image, ${a.name}. Opens full size.`);
       wrap.append(link);
+    } else if (a.isVoice) {
+      const box = document.createElement('div');
+      box.className = 'attachment-voice';
+      // Native controls on purpose: play, pause, seek, speed and volume all
+      // work with a keyboard and a screen reader without any of it being
+      // reimplemented here, which a hand-drawn waveform would have to be.
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'metadata';
+      audio.src = a.url;
+      audio.setAttribute('aria-label', a.durationMs
+        ? `Voice note, ${recorder.formatDuration(a.durationMs)}`
+        : 'Voice note');
+      box.append(audio);
+      if (a.durationMs) {
+        const len = document.createElement('span');
+        len.className = 'voice-length';
+        len.textContent = recorder.formatDuration(a.durationMs);
+        box.append(len);
+      }
+      wrap.append(box);
     } else {
       const link = document.createElement('a');
       link.className = 'attachment-file';
@@ -1885,7 +1907,7 @@ function closeEmojiPicker() {
  * whichever of the three currently on screen sits highest.
  */
 function composerAreaTop() {
-  const visible = ['#composer-context', '#attachment-tray', '#composer']
+  const visible = ['#composer-context', '#attachment-tray', '#recording-bar', '#composer']
     .map((sel) => $(sel))
     .filter((el) => el && !el.hidden);
   if (!visible.length) return window.innerHeight;
@@ -2054,6 +2076,97 @@ function startEdit(m) {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 
+/**
+ * Recording a voice note.
+ *
+ * The recording is uploaded as soon as it stops and joins the attachment tray,
+ * so it goes out through the same send button, the same outbox and the same
+ * retry as everything else. Recording straight into a send would need a second
+ * path for failure and offline, and a recording is worth keeping if the send is
+ * the part that fails.
+ */
+let recording = null;
+
+function wireRecording() {
+  const btn = $('#btn-record');
+  // Nothing to offer on a browser without MediaRecorder, and a button that
+  // explains it cannot work is worse than no button.
+  if (!recorder.isSupported()) return;
+  btn.hidden = false;
+
+  btn.addEventListener('click', () => startRecording());
+  $('#btn-record-stop').addEventListener('click', () => finishRecording());
+  $('#btn-record-cancel').addEventListener('click', () => discardRecording());
+}
+
+function showRecordingBar(on) {
+  $('#recording-bar').hidden = !on;
+  $('#btn-record').setAttribute('aria-pressed', on ? 'true' : 'false');
+  $('#composer-input').disabled = on;
+  // The picker anchors to a composer button that is on its way out of use, and
+  // there is nothing to insert an emoji into while the input is disabled.
+  closeEmojiPicker();
+}
+
+async function startRecording() {
+  if (recording || !activeConvoId) return;
+  if (pendingAttachments.length >= 4) { toast('Up to 4 files per message.', 'error'); return; }
+
+  const time = $('#recording-time');
+  time.textContent = '0:00';
+  try {
+    recording = await recorder.start({
+      onTick: (ms) => { time.textContent = recorder.formatDuration(ms); },
+      onLimit: () => toast('Five minutes is the longest a voice note can be — stopping there.', 'info'),
+    });
+  } catch (err) {
+    toast(err.message, 'error');
+    return;
+  }
+  showRecordingBar(true);
+  // Focus moves to Stop, because that is the only thing to do next and the
+  // composer it replaced is now disabled.
+  $('#btn-record-stop').focus();
+}
+
+async function finishRecording() {
+  if (!recording) return;
+  const handle = recording;
+  recording = null;
+  showRecordingBar(false);
+
+  let result;
+  try {
+    result = await handle.stop();
+  } catch {
+    toast('The recording could not be saved.', 'error');
+    return;
+  }
+  if (!result || result.durationMs < 400) {
+    toast('That was too short to send.', 'info');
+    return;
+  }
+
+  try {
+    const uploaded = await db.uploadVoiceNote(activeConvoId, result.blob, result.durationMs);
+    pendingAttachments.push(uploaded);
+    renderAttachmentTray();
+    updateSendState();
+    $('#composer-input').focus();
+  } catch (err) {
+    toast(err.message || 'The recording could not be sent.', 'error');
+  }
+}
+
+async function discardRecording() {
+  if (!recording) return;
+  const handle = recording;
+  recording = null;
+  showRecordingBar(false);
+  await handle.cancel();
+  $('#composer-input').focus();
+}
+
 let pendingAttachments = [];
 
 function renderAttachmentTray() {
@@ -2064,7 +2177,11 @@ function renderAttachmentTray() {
     const chip = document.createElement('div');
     chip.className = 'attachment-chip';
     chip.innerHTML = '<span class="attachment-chip-name"></span>';
-    chip.querySelector('.attachment-chip-name').textContent = `${a.name} (${formatBytes(a.size)})`;
+    // A recording has no filename worth showing — "voice-note (18 KB)" tells you
+    // nothing you want to know, where its length does.
+    chip.querySelector('.attachment-chip-name').textContent = a.isVoice
+      ? `Voice note · ${recorder.formatDuration(a.durationMs)}`
+      : `${a.name} (${formatBytes(a.size)})`;
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'btn icon-btn sm';
@@ -3762,6 +3879,8 @@ function wireConvoPane() {
     dropZone.classList.remove('drop-target');
     addFiles(e.dataTransfer.files);
   });
+
+  wireRecording();
 
   // Emoji
   $('#btn-emoji').addEventListener('click', (e) => {

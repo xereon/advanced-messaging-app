@@ -429,6 +429,20 @@ as an inert download; only a small allow-list of image types is ever served
 inline, behind `Content-Disposition`, `nosniff` and a `default-src 'none'; sandbox`
 CSP. Downloads are membership-checked, and deleting a message deletes its files.
 
+**Voice notes** hold the mic button to record, up to five minutes; releasing —
+or the cap being hit — uploads and attaches it like any other file. They go
+through the exact same pipeline as an attachment: the same size cap, the same
+virus-scanner hook, the same membership check on download. The only difference
+is which sniffer decides the type. An ordinary upload is still judged by the
+image allow-list alone — widening that sniffer to recognise audio containers
+would have meant every `.webm` file attached anywhere started being served
+inline — so audio is only ever accepted on the dedicated voice route, and only
+in a container a browser's own recorder actually produces: WebM/Opus and Ogg
+from Chrome and Firefox, mp4/AAC from Safari, which offers nothing else. Bytes
+that are not one of those are refused rather than guessed at. The recorded
+length rides along to size the player, clamped to five minutes server-side
+rather than trusted from the browser.
+
 **Notifications reach you with the app closed.** Relay is installable, and
 turning notifications on registers the device for Web Push — VAPID signing and
 RFC 8291 payload encryption, so the push service relays a body it cannot read.
