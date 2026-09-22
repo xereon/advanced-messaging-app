@@ -84,6 +84,15 @@ android {
 }
 
 dependencies {
+    // androidbrowserhelper still asks for kotlin-stdlib-jdk7 and -jdk8 at
+    // 1.6.21, while appcompat brings kotlin-stdlib 1.8.22. Since Kotlin 1.8
+    // those two jdk artifacts are empty and the classes they used to hold live
+    // in kotlin-stdlib itself, so having an older pair alongside a newer
+    // kotlin-stdlib duplicates every one of them and the build stops. Lifting
+    // all three to one version leaves the jdk artifacts holding nothing, which
+    // is the point of them now.
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.9.24')
+
     // The whole app. It launches Chrome as a Trusted Web Activity, verifies the
     // Digital Asset Link, and relays the site's notifications to the system tray.
     implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
