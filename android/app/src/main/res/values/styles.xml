@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Relay" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash</item>
+    </style>
+
+    <!-- The launcher holds the screen only for as long as it takes to hand off
+         to Chrome. A translucent window means that moment shows the brand mark
+         over the app's own background rather than a white flash. -->
+    <style name="Theme.Relay.Launcher" parent="Theme.Relay">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowBackground">@drawable/splash</item>
+    </style>
+</resources>

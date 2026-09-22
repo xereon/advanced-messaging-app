@@ -1,0 +1,23 @@
+// The Android project is deliberately a sibling of the web app rather than a
+// rewrite of it: it wraps https://relaaay.online in a Trusted Web Activity, so
+// there is exactly one copy of the messaging code and it is the one already
+// deployed.
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'Relay'
+include ':app'

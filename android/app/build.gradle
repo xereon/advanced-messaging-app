@@ -1,0 +1,93 @@
+plugins {
+    id 'com.android.application'
+}
+
+// One property decides which deployment the app opens, which host its links are
+// claimed for, and which site the Digital Asset Link is checked against. They
+// must agree; deriving all three from one value is how they stay that way.
+def relayHost = (project.findProperty('relayHost') ?: 'relaaay.online').toString().trim()
+def relayOrigin = "https://${relayHost}"
+
+def prop = { String name, String env ->
+    def value = System.getenv(env) ?: project.findProperty(name)
+    value == null || value.toString().isEmpty() ? null : value.toString()
+}
+
+def keystorePath = prop('relayKeystore', 'RELAY_KEYSTORE')
+
+android {
+    namespace 'online.relaaay.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'online.relaaay.app'
+        // 26 rather than 21: a Trusted Web Activity needs a modern Chrome
+        // anyway, and Android 8 is where adaptive icons arrive, which is what
+        // lets the whole app ship with vector art and no bitmaps.
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+
+        manifestPlaceholders = [relayHost: relayHost]
+
+        resValue 'string', 'launch_url', "${relayOrigin}/"
+
+        // The other half of the Digital Asset Link. The app names the site here;
+        // the site names the app's signing key in /.well-known/assetlinks.json.
+        // Only when both agree does the address bar disappear.
+        resValue 'string', 'asset_statements',
+                "[{ \\\"relation\\\": [\\\"delegate_permission/common.handle_all_urls\\\"], " +
+                "\\\"target\\\": { \\\"namespace\\\": \\\"web\\\", \\\"site\\\": \\\"${relayOrigin}\\\" } }]"
+    }
+
+    signingConfigs {
+        if (keystorePath != null) {
+            release {
+                storeFile file(keystorePath)
+                storePassword prop('relayKeystorePassword', 'RELAY_KEYSTORE_PASSWORD')
+                keyAlias prop('relayKeyAlias', 'RELAY_KEY_ALIAS')
+                keyPassword prop('relayKeyPassword', 'RELAY_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // So a debug build can sit on the same device as a release one.
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
+        release {
+            // Nothing to shrink: the only code in the APK is the browser helper
+            // library, all of it reached from the manifest. Running R8 over it
+            // would trade a few kilobytes for a class of failure that only shows
+            // up on a device.
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (keystorePath != null) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        // A wrapper has no application code to lint, and a lint failure should
+        // never be the reason there is no APK to install.
+        abortOnError false
+    }
+}
+
+dependencies {
+    // The whole app. It launches Chrome as a Trusted Web Activity, verifies the
+    // Digital Asset Link, and relays the site's notifications to the system tray.
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+
+    // Only for the theme the launcher window uses.
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+}

@@ -204,6 +204,31 @@ a root-owned `0600` file instead.
 | `EADDRINUSE` | Something already holds the port. `PORT=8131 npm start`, or stop the other process. |
 | Uploads fail at ~10 MB | The app's own cap. A proxy `client_max_body_size` below that fails earlier and less clearly. |
 
+## Android app
+
+`android/` wraps the deployed site as an installable Android app. It is a
+Trusted Web Activity — Chrome, full screen, with no address bar once the site
+proves it owns the app — so passkeys, Web Push and voice notes keep working
+exactly as they do in the browser, and shipping a fix is still just deploying
+the site. There is no application code in it.
+
+Build an APK from Actions → **Android** → *Run workflow*, or locally:
+
+```sh
+cd android && ./gradlew assembleDebug
+```
+
+Removing the address bar needs one document on the site naming the app's signing
+key:
+
+```sh
+npm run assetlinks -- --keystore relay-release.jks --alias relay
+```
+
+which writes `public/.well-known/assetlinks.json`, served from the web root like
+any other static file. `android/README.md` covers signing, the Play Store and
+what breaks when the two halves disagree.
+
 ## Architecture
 
 ```
@@ -225,6 +250,8 @@ public/
   js/store.js  client cache over the API; keeps reads synchronous
   js/ui.js     chat UI: sidebar, messages, composer, search, settings
   js/settings.js, js/palette.js, js/util.js
+android/       Trusted Web Activity wrapper — XML only, no application code
+scripts/       admin, reports, encrypt, assetlinks — all run through npm
 test/          server tests (node:test)
 deploy/        systemd unit, nginx config, backup script, cPanel .htaccess
 app.js         Passenger entry point for cPanel; `npm start` uses server/index.js

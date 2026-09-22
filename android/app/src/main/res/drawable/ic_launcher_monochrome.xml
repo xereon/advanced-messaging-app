@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed icons on Android 13+: the system recolours this layer, so it carries
+     shape only. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <path
+        android:pathData="M168,320V216a44,44 0 0 1 44,-44h88a44,44 0 0 1 44,44v56a44,44 0 0 1 -44,44h-84l-48,38v-34z"
+        android:strokeColor="#000000"
+        android:strokeWidth="28"
+        android:strokeLineJoin="round" />
+</vector>

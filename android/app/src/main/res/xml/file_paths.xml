@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Where the browser puts a file saved out of a conversation. -->
+    <external-path name="downloads" path="Download/" />
+    <cache-path name="cache" path="." />
+</paths>

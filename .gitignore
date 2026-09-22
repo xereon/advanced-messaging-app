@@ -19,3 +19,15 @@ data/
 *.zip
 *.tar.gz
 *.tgz
+
+# Android build output, and the file Android Studio writes pointing at whichever
+# SDK happens to be installed on this machine.
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+
+# Signing keys. Losing one means never being able to update an installed app;
+# committing one means anyone can publish as you.
+*.jks
+*.keystore

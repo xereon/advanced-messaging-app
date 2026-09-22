@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 draws its own splash screen from the launcher icon and ignores
+     windowBackground for it. Only the colour behind the icon is ours to set. -->
+<resources>
+    <style name="Theme.Relay.Launcher" parent="Theme.Relay">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@drawable/splash</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+    </style>
+</resources>

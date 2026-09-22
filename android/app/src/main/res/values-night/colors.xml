@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The site follows prefers-color-scheme, so the window behind it should too. -->
+<resources>
+    <color name="navigation_bar">#0E1320</color>
+</resources>

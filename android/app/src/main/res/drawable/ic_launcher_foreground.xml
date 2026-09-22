@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- public/icon-maskable.svg, as the foreground layer of the adaptive icon. The
+     glyph is already inset far enough to survive a circular mask. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <path
+        android:pathData="M168,320V216a44,44 0 0 1 44,-44h88a44,44 0 0 1 44,44v56a44,44 0 0 1 -44,44h-84l-48,38v-34z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="28"
+        android:strokeLineJoin="round" />
+</vector>

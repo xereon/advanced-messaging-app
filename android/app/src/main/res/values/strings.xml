@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Relay</string>
+    <!-- launch_url and asset_statements are generated from the relayHost
+         property in app/build.gradle, so the URL the app opens and the site it
+         is verified against can never drift apart. -->
+</resources>

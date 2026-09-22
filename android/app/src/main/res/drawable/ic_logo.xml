@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- public/icon.svg, as a vector drawable. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="512dp"
+    android:height="512dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <path
+        android:pathData="M112,0h288a112,112 0 0 1 112,112v288a112,112 0 0 1 -112,112h-288a112,112 0 0 1 -112,-112v-288a112,112 0 0 1 112,-112z"
+        android:fillColor="#2458E6" />
+    <path
+        android:pathData="M136,336V200a56,56 0 0 1 56,-56h128a56,56 0 0 1 56,56v72a56,56 0 0 1 -56,56H208l-72,56v-48z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="34"
+        android:strokeLineJoin="round" />
+</vector>

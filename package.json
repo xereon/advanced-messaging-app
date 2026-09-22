@@ -13,6 +13,7 @@
     "test": "node --test --test-concurrency=1 'test/**/*.test.js'",
     "reports": "node scripts/reports.js",
     "admin": "node scripts/admin.js",
+    "assetlinks": "node scripts/assetlinks.js",
     "encrypt": "node scripts/encrypt.js"
   }
 }

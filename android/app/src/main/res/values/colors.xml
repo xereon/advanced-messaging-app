@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Taken from the web app: theme_color and background_color in
+     public/manifest.webmanifest, and the default theme's background in
+     public/css/app.css. The system bars should look like part of the page,
+     not like a frame around it. -->
+<resources>
+    <color name="status_bar">#2458E6</color>
+    <color name="navigation_bar">#F2F4F9</color>
+    <color name="status_bar_dark">#0E1320</color>
+    <color name="navigation_bar_dark">#0E1320</color>
+
+    <color name="splash_background">#0E1320</color>
+    <color name="icon_background">#2458E6</color>
+</resources>
